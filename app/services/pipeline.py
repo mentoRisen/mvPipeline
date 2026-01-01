@@ -8,6 +8,7 @@ from app.services.task_repo import create_task, save, mark_failed
 from app.services.quote_generator import QuoteGenerator
 from app.services.image_generator import ImageGenerator
 from app.db.engine import create_tables
+from app.config import DEFAULT_IMAGE_GENERATOR
 
 
 def run_pipeline() -> Optional[Task]:
@@ -37,15 +38,21 @@ def run_pipeline() -> Optional[Task]:
     try:
         # Step 1: Create task
         task = create_task()
-        print(f"Created task: {task.id}")
+        # Set image generator from config (if not already set)
+        if not task.image_generator:
+            task.image_generator = DEFAULT_IMAGE_GENERATOR
+        print(f"Created task: {task.id} (image_generator: {task.image_generator})")
         task.start_processing()
         task = save(task)
         
-        # Step 2: Generate quote
+        # Step 2: Generate quote and image prompt
         quote_text = quote_generator.generate(task)
+        image_prompt = quote_generator.generate_image_prompt(quote_text)
         task.mark_quote_ready(quote_text)
+        task.image_generator_prompt = image_prompt
         task = save(task)
         print(f"Generated quote for task {task.id}")
+        print(f"Generated image prompt for task {task.id}")
         
         # Step 3: Generate image
         image_path = image_generator.render(task)

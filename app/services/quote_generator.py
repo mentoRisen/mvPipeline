@@ -63,4 +63,27 @@ class QuoteGenerator:
         # This ensures same task always gets same quote (testable)
         quote_index = hash(str(task.id)) % len(self._PLACEHOLDER_QUOTES)
         return self._PLACEHOLDER_QUOTES[quote_index]
+    
+    def generate_image_prompt(self, quote_text: str) -> str:
+        """Generate an AI image generation prompt based on the quote text.
+        
+        Creates a prompt suitable for external AI image generators (DALL-E, Midjourney,
+        Stable Diffusion, etc.) that will generate an image representing the quote.
+        
+        Args:
+            quote_text: The quote text to create an image prompt for
+            
+        Returns:
+            Image generation prompt string
+        """
+        # MVP: Simple prompt template that incorporates the quote
+        # Future: Could use LLM to generate more sophisticated prompts
+        prompt = (
+            f"A beautiful, inspirational Instagram post image featuring the quote: "
+            f'"{quote_text}". '
+            f"Modern, minimalist design with elegant typography, soft lighting, "
+            f"professional photography style, high quality, 1080x1080 square format, "
+            f"vibrant colors, inspirational mood"
+        )
+        return prompt
 

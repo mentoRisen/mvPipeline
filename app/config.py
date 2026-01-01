@@ -81,3 +81,23 @@ Can be set via PIPELINE_MODE environment variable. Defaults to "once".
 if PIPELINE_MODE not in ("once", "continuous", "batch"):
     PIPELINE_MODE = "once"  # Fallback to safe default
 
+# OpenAI API configuration
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+"""OpenAI API key for DALL-E image generation.
+
+Get your API key from: https://platform.openai.com/api-keys
+Set via OPENAI_API_KEY environment variable or .env file.
+"""
+
+# Image generator configuration
+DEFAULT_IMAGE_GENERATOR = os.getenv("DEFAULT_IMAGE_GENERATOR", "pillow").lower()
+"""Default image generator to use.
+
+Valid values:
+    - "pillow": Render quote on template (default)
+    - "dalle": Generate image using DALL-E API
+    
+Set via DEFAULT_IMAGE_GENERATOR environment variable or .env file.
+Defaults to "pillow".
+"""
+

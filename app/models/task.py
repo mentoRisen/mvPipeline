@@ -73,6 +73,11 @@ class Task(SQLModel, table=True):
         description="Image generator to use (e.g., 'pillow', empty defaults to pillow)"
     )
     
+    image_generator_prompt: Optional[str] = Field(
+        default=None,
+        description="Prompt for external AI image generator (DALL-E, Midjourney, etc.)"
+    )
+    
     # Scheduling
     scheduled_for: Optional[datetime] = Field(
         default=None,
