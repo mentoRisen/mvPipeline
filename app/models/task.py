@@ -14,20 +14,26 @@ from sqlmodel import SQLModel, Field, Column, JSON
 class TaskStatus(str, Enum):
     """Task status enumeration for Instagram post pipeline.
     
-    Status transitions:
-        PENDING -> PROCESSING (when pipeline starts)
-        PROCESSING -> QUOTE_READY (when quote is generated)
-        QUOTE_READY -> IMAGE_READY (when image is generated)
-        IMAGE_READY -> COMPLETED (when post is ready)
+    Status transitions (with manual approvals):
+        DRAFT -> PENDING_APPROVAL (when AI creates task and user submits)
+        PENDING_APPROVAL -> PROCESSING (when user approves for processing)
+        PENDING_APPROVAL -> DISAPPROVED (when user disapproves processing)
+        PROCESSING -> PENDING_CONFIRMATION (when quote and image generation complete)
+        PENDING_CONFIRMATION -> READY (when user confirms/approves the content)
+        PENDING_CONFIRMATION -> REJECTED (when user rejects publication)
+        READY -> PUBLISHED (when user confirms publication)
         Any -> FAILED (on error)
-        FAILED -> PENDING (retry)
+        FAILED -> PENDING_APPROVAL (retry)
     """
-    PENDING = "pending"
-    PROCESSING = "processing"
-    QUOTE_READY = "quote_ready"
-    IMAGE_READY = "image_ready"
-    COMPLETED = "completed"
-    FAILED = "failed"
+    DRAFT = "draft"  # AI created, not yet submitted for approval
+    PENDING_APPROVAL = "pending_approval"  # Waiting for user to approve processing
+    DISAPPROVED = "disapproved"  # User disapproved processing
+    PROCESSING = "processing"  # User approved, processing started
+    PENDING_CONFIRMATION = "pending_confirmation"  # Waiting for user to confirm content after generation
+    REJECTED = "rejected"  # User rejected publication
+    READY = "ready"  # User confirmed content, ready for publication
+    PUBLISHED = "published"  # User confirmed, post published (completed)
+    FAILED = "failed"  # Error state
 
 
 class Task(SQLModel, table=True):
@@ -48,7 +54,7 @@ class Task(SQLModel, table=True):
     
     # Status tracking
     status: TaskStatus = Field(
-        default=TaskStatus.PENDING,
+        default=TaskStatus.DRAFT,
         description="Current status of the task"
     )
     
@@ -127,31 +133,94 @@ class Task(SQLModel, table=True):
     def mark_quote_ready(self, quote_text: str) -> None:
         """Mark task as having quote ready.
         
+        Note: Status remains PROCESSING until image is also generated.
+        
         Args:
             quote_text: The generated quote text
         """
-        self.status = TaskStatus.QUOTE_READY
         self.quote_text = quote_text
         self.updated_at = datetime.utcnow()
     
     def mark_image_ready(self, image_path: str) -> None:
-        """Mark task as having image ready.
+        """Mark task as having image ready (quote and image both complete).
+        
+        Moves task from PROCESSING to PENDING_CONFIRMATION, waiting for user approval.
         
         Args:
             image_path: Path to the generated image file
         """
-        self.status = TaskStatus.IMAGE_READY
         self.image_path = image_path
+        self.status = TaskStatus.PENDING_CONFIRMATION
         self.updated_at = datetime.utcnow()
     
     def mark_completed(self) -> None:
-        """Mark task as completed."""
-        self.status = TaskStatus.COMPLETED
+        """Mark task as completed (DEPRECATED - use mark_published)."""
+        self.status = TaskStatus.PUBLISHED
+        self.updated_at = datetime.utcnow()
+    
+    def mark_published(self) -> None:
+        """Mark task as published (user action).
+        
+        Moves task from READY to PUBLISHED.
+        """
+        if self.status != TaskStatus.READY:
+            raise ValueError(f"Cannot publish task in status {self.status.value}")
+        self.status = TaskStatus.PUBLISHED
+        self.updated_at = datetime.utcnow()
+    
+    def approve_for_processing(self) -> None:
+        """Approve task for processing (user action)."""
+        if self.status != TaskStatus.PENDING_APPROVAL:
+            raise ValueError(f"Cannot approve task in status {self.status.value}")
+        self.status = TaskStatus.PROCESSING
+        self.attempt_count += 1
+        self.updated_at = datetime.utcnow()
+    
+    def disapprove_task(self) -> None:
+        """Disapprove task from processing (user action)."""
+        if self.status != TaskStatus.PENDING_APPROVAL:
+            raise ValueError(f"Cannot disapprove task in status {self.status.value}")
+        self.status = TaskStatus.DISAPPROVED
+        self.updated_at = datetime.utcnow()
+    
+    def approve_for_publication(self) -> None:
+        """Approve task content for publication (user action).
+        
+        Moves task from PENDING_CONFIRMATION to READY.
+        """
+        if self.status != TaskStatus.PENDING_CONFIRMATION:
+            raise ValueError(f"Cannot approve publication in status {self.status.value}")
+        self.status = TaskStatus.READY
+        self.updated_at = datetime.utcnow()
+    
+    def reject_task(self) -> None:
+        """Reject task from publication (user action)."""
+        if self.status != TaskStatus.PENDING_CONFIRMATION:
+            raise ValueError(f"Cannot reject task in status {self.status.value}")
+        self.status = TaskStatus.REJECTED
+        self.updated_at = datetime.utcnow()
+    
+    def submit_for_approval(self) -> None:
+        """Submit draft task for approval (move from DRAFT to PENDING_APPROVAL)."""
+        if self.status != TaskStatus.DRAFT:
+            raise ValueError(f"Cannot submit task in status {self.status.value}")
+        self.status = TaskStatus.PENDING_APPROVAL
         self.updated_at = datetime.utcnow()
     
     def start_processing(self) -> None:
-        """Mark task as being processed."""
+        """Mark task as being processed (internal use - use approve_for_processing for user actions)."""
         self.status = TaskStatus.PROCESSING
         self.attempt_count += 1
+        self.updated_at = datetime.utcnow()
+    
+    def request_confirmation(self) -> None:
+        """Request user confirmation before publication (DEPRECATED - not used in current flow).
+        
+        This method is kept for backwards compatibility but is not part of the current
+        status flow. The flow is: PROCESSING -> PENDING_CONFIRMATION -> READY -> PUBLISHED.
+        """
+        if self.status != TaskStatus.READY:
+            raise ValueError(f"Cannot request confirmation in status {self.status.value}")
+        self.status = TaskStatus.PENDING_CONFIRMATION
         self.updated_at = datetime.utcnow()
 

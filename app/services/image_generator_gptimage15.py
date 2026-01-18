@@ -1,9 +1,9 @@
-"""DALL-E image generator for quotes.
+"""GPT-Image-1.5 image generator for quotes.
 
-Uses OpenAI's DALL-E API to generate images from prompts.
+Uses OpenAI's GPT-Image-1.5 API to generate images from prompts.
 """
 
-import os
+import base64
 from pathlib import Path
 from typing import TYPE_CHECKING
 import requests
@@ -14,11 +14,11 @@ if TYPE_CHECKING:
     from app.models.task import Task
 
 
-class ImageGeneratorDalle:
-    """DALL-E API-based image generator for rendering quotes as images."""
+class ImageGeneratorGptimage15:
+    """GPT-Image-1.5 API-based image generator for rendering quotes as images."""
     
     def __init__(self):
-        """Initialize the DALL-E image generator."""
+        """Initialize the GPT-Image-1.5 image generator."""
         self.output_dir = OUTPUT_DIR / "images"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -33,7 +33,7 @@ class ImageGeneratorDalle:
         self.api_url = "https://api.openai.com/v1/images/generations"
     
     def render(self, task: "Task") -> str:
-        """Render an image using DALL-E API.
+        """Render an image using GPT-Image-1.5 API.
         
         Args:
             task: The task containing image_generator_prompt to use
@@ -46,21 +46,21 @@ class ImageGeneratorDalle:
             requests.RequestException: If API call fails
         """
         if not task.image_generator_prompt:
-            raise ValueError("Task must have image_generator_prompt to use DALL-E generator")
+            raise ValueError("Task must have image_generator_prompt to use GPT-Image-1.5 generator")
         
-        # Call DALL-E API
+        # Call GPT-Image-1.5 API
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
         
         payload = {
-            "model": "dall-e-3",
+            "model": "gpt-image-1.5",
             "prompt": task.image_generator_prompt,
             "n": 1,
             "size": "1024x1024",  # Square format for Instagram
-            "quality": "standard",
-            "response_format": "url"  # Get URL, then download
+            "quality": "high"  # GPT-Image-1.5 supports: 'low', 'medium', 'high', 'auto'
+            # Note: GPT-Image-1.5 returns base64 by default, no response_format parameter
         }
         
         try:
@@ -68,27 +68,25 @@ class ImageGeneratorDalle:
             response.raise_for_status()
             
             data = response.json()
-            image_url = data["data"][0]["url"]
-            
-            # Download the image
-            image_response = requests.get(image_url, timeout=30)
-            image_response.raise_for_status()
+            # GPT-Image-1.5 returns base64-encoded image data
+            image_b64 = data["data"][0]["b64_json"]
             
             # Create task-specific folder
             task_dir = self.output_dir / str(task.id)
             task_dir.mkdir(parents=True, exist_ok=True)
             
-            # Save to file
+            # Decode base64 and save to file
             image_filename = f"{task.id}.png"
             image_path = task_dir / image_filename
             
+            image_data = base64.b64decode(image_b64)
             with open(image_path, "wb") as f:
-                f.write(image_response.content)
+                f.write(image_data)
             
             return str(image_path)
             
         except requests.exceptions.RequestException as e:
-            error_msg = f"DALL-E API error: {str(e)}"
+            error_msg = f"GPT-Image-1.5 API error: {str(e)}"
             if hasattr(e, 'response') and e.response is not None:
                 try:
                     error_detail = e.response.json()

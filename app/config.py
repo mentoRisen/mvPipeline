@@ -101,3 +101,19 @@ Set via DEFAULT_IMAGE_GENERATOR environment variable or .env file.
 Defaults to "pillow".
 """
 
+# Instagram API configuration
+INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
+"""Instagram Graph API access token (long-lived).
+
+Required for publishing posts to Instagram.
+Get from: https://developers.facebook.com/docs/instagram-api/getting-started
+Set via INSTAGRAM_ACCESS_TOKEN environment variable or .env file.
+"""
+
+INSTAGRAM_ACCOUNT_ID = os.getenv("INSTAGRAM_ACCOUNT_ID")
+"""Instagram Business Account ID.
+
+Required for publishing posts to Instagram.
+Get from: https://developers.facebook.com/docs/instagram-api/getting-started
+Set via INSTAGRAM_ACCOUNT_ID environment variable or .env file.
+"""

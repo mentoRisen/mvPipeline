@@ -1,0 +1,80 @@
+<template>
+  <div class="tasks-view">
+    <section class="tasks-view-left">
+      <TaskList
+        :selected-task-id="selectedTaskId"
+        @select-task="handleSelectTask"
+      />
+    </section>
+    <section class="tasks-view-right">
+      <TaskDetail
+        v-if="selectedTaskId"
+        :id="selectedTaskId"
+        key="detail"
+      />
+      <div v-else class="placeholder card">
+        <h3>Select a task</h3>
+        <p>Choose a task from the list on the left to see its details here.</p>
+      </div>
+    </section>
+  </div>
+</template>
+
+<script>
+import TaskList from '../components/TaskList.vue'
+import TaskDetail from '../components/TaskDetail.vue'
+
+export default {
+  name: 'TasksView',
+  components: {
+    TaskList,
+    TaskDetail,
+  },
+  data() {
+    return {
+      selectedTaskId: null,
+    }
+  },
+  methods: {
+    handleSelectTask(id) {
+      this.selectedTaskId = id
+    },
+  },
+}
+</script>
+
+<style scoped>
+.tasks-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.8fr);
+  gap: 1.5rem;
+}
+
+@media (max-width: 1024px) {
+  .tasks-view {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tasks-view-left {
+  min-width: 0;
+}
+
+.tasks-view-right {
+  min-width: 0;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 200px;
+  color: #6b7280;
+}
+
+.placeholder h3 {
+  margin-bottom: 0.5rem;
+}
+</style>
+

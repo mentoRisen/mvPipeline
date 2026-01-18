@@ -1,6 +1,7 @@
 """Database operations for tasks."""
 
 from typing import Optional
+from uuid import UUID
 from sqlmodel import Session, select
 
 from app.models.task import Task, TaskStatus
@@ -8,7 +9,7 @@ from app.db.engine import engine
 
 
 def create_task() -> Task:
-    """Create a new task with default PENDING status.
+    """Create a new task with default DRAFT status.
     
     Returns:
         Task: The newly created task
@@ -19,6 +20,42 @@ def create_task() -> Task:
         session.commit()
         session.refresh(task)
     return task
+
+
+def get_task_by_id(task_id: UUID) -> Optional[Task]:
+    """Get a task by its ID.
+    
+    Args:
+        task_id: The UUID of the task
+        
+    Returns:
+        Task if found, None otherwise
+    """
+    with Session(engine) as session:
+        statement = select(Task).where(Task.id == task_id)
+        result = session.exec(statement).first()
+        return result
+
+
+def list_all_tasks(limit: int = 100, offset: int = 0) -> list[Task]:
+    """List all tasks with pagination.
+    
+    Args:
+        limit: Maximum number of tasks to return (default: 100)
+        offset: Number of tasks to skip (default: 0)
+        
+    Returns:
+        List of tasks, ordered by creation time (newest first)
+    """
+    with Session(engine) as session:
+        statement = (
+            select(Task)
+            .order_by(Task.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        results = session.exec(statement).all()
+        return list(results)
 
 
 def get_next_task_by_status(status: TaskStatus) -> Optional[Task]:
@@ -99,5 +136,131 @@ def mark_failed(task: Task, error: str) -> Task:
         The updated task
     """
     task.mark_failed(error)
+    return save(task)
+
+
+def approve_task_for_processing(task_id: UUID) -> Task:
+    """Approve a task for processing (user action).
+    
+    Moves task from PENDING_APPROVAL to PROCESSING.
+    
+    Args:
+        task_id: The UUID of the task to approve
+        
+    Returns:
+        The updated task
+        
+    Raises:
+        ValueError: If task not found or not in PENDING_APPROVAL status
+    """
+    task = get_task_by_id(task_id)
+    if not task:
+        raise ValueError(f"Task {task_id} not found")
+    task.approve_for_processing()
+    return save(task)
+
+
+def disapprove_task(task_id: UUID) -> Task:
+    """Disapprove a task from processing (user action).
+    
+    Moves task from PENDING_APPROVAL to DISAPPROVED.
+    
+    Args:
+        task_id: The UUID of the task to disapprove
+        
+    Returns:
+        The updated task
+        
+    Raises:
+        ValueError: If task not found or not in PENDING_APPROVAL status
+    """
+    task = get_task_by_id(task_id)
+    if not task:
+        raise ValueError(f"Task {task_id} not found")
+    task.disapprove_task()
+    return save(task)
+
+
+def approve_task_for_publication(task_id: UUID) -> Task:
+    """Approve a task for publication (user action).
+    
+    Moves task from PENDING_CONFIRMATION to READY.
+    
+    Args:
+        task_id: The UUID of the task to approve
+        
+    Returns:
+        The updated task
+        
+    Raises:
+        ValueError: If task not found or not in PENDING_CONFIRMATION status
+    """
+    task = get_task_by_id(task_id)
+    if not task:
+        raise ValueError(f"Task {task_id} not found")
+    task.approve_for_publication()
+    return save(task)
+
+
+def publish_task(task_id: UUID) -> Task:
+    """Publish a task (user action).
+    
+    Moves task from READY to PUBLISHED.
+    
+    Args:
+        task_id: The UUID of the task to publish
+        
+    Returns:
+        The updated task
+        
+    Raises:
+        ValueError: If task not found or not in READY status
+    """
+    task = get_task_by_id(task_id)
+    if not task:
+        raise ValueError(f"Task {task_id} not found")
+    task.mark_published()
+    return save(task)
+
+
+def reject_task(task_id: UUID) -> Task:
+    """Reject a task from publication (user action).
+    
+    Moves task from PENDING_CONFIRMATION to REJECTED.
+    
+    Args:
+        task_id: The UUID of the task to reject
+        
+    Returns:
+        The updated task
+        
+    Raises:
+        ValueError: If task not found or not in PENDING_CONFIRMATION status
+    """
+    task = get_task_by_id(task_id)
+    if not task:
+        raise ValueError(f"Task {task_id} not found")
+    task.reject_task()
+    return save(task)
+
+
+def submit_task_for_approval(task_id: UUID) -> Task:
+    """Submit a draft task for approval (user action).
+    
+    Moves task from DRAFT to PENDING_APPROVAL.
+    
+    Args:
+        task_id: The UUID of the task to submit
+        
+    Returns:
+        The updated task
+        
+    Raises:
+        ValueError: If task not found or not in DRAFT status
+    """
+    task = get_task_by_id(task_id)
+    if not task:
+        raise ValueError(f"Task {task_id} not found")
+    task.submit_for_approval()
     return save(task)
 

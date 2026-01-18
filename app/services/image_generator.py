@@ -19,6 +19,7 @@ class ImageGenerator:
     Delegates to appropriate generator based on task.image_generator:
     - "pillow" or empty: Uses Pillow to render quote on template
     - "dalle": Uses OpenAI DALL-E API to generate image from prompt
+    - "gptimage15": Uses OpenAI GPT-Image-1.5 API to generate image from prompt
     - Other: Falls back to stub generator
     """
     
@@ -30,6 +31,7 @@ class ImageGenerator:
         # Lazy import to avoid requiring dependencies if not needed
         self._pillow_generator = None
         self._dalle_generator = None
+        self._gptimage15_generator = None
     
     def _get_pillow_generator(self):
         """Get or create Pillow generator instance."""
@@ -45,12 +47,20 @@ class ImageGenerator:
             self._dalle_generator = ImageGeneratorDalle()
         return self._dalle_generator
     
+    def _get_gptimage15_generator(self):
+        """Get or create GPT-Image-1.5 generator instance."""
+        if self._gptimage15_generator is None:
+            from app.services.image_generator_gptimage15 import ImageGeneratorGptimage15
+            self._gptimage15_generator = ImageGeneratorGptimage15()
+        return self._gptimage15_generator
+    
     def render(self, task: "Task") -> str:
         """Render an image for the given task.
         
         Uses generator based on task.image_generator:
         - "pillow" or empty: Pillow generator (renders quote on template)
         - "dalle": DALL-E API generator (generates image from prompt)
+        - "gptimage15": GPT-Image-1.5 API generator (generates image from prompt)
         - Other: Stub generator (placeholder)
         
         Args:
@@ -64,13 +74,20 @@ class ImageGenerator:
         if generator_type == "dalle":
             dalle_gen = self._get_dalle_generator()
             return dalle_gen.render(task)
+        elif generator_type == "gptimage15":
+            gptimage15_gen = self._get_gptimage15_generator()
+            return gptimage15_gen.render(task)
         elif generator_type == "pillow" or generator_type == "":
             pillow_gen = self._get_pillow_generator()
             return pillow_gen.render(task)
         
         # Fallback to stub generator for other types
+        # Create task-specific folder
+        task_dir = self.output_dir / str(task.id)
+        task_dir.mkdir(parents=True, exist_ok=True)
+        
         image_filename = f"{task.id}.png"
-        image_path = self.output_dir / image_filename
+        image_path = task_dir / image_filename
         image_path.touch()
         return str(image_path)
 

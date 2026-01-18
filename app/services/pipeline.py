@@ -5,19 +5,19 @@ from typing import Optional
 
 from app.models.task import Task, TaskStatus
 from app.services.task_repo import create_task, save, mark_failed
-from app.services.quote_generator import QuoteGenerator
+from app.services.task_generator import TaskGenerator
 from app.services.image_generator import ImageGenerator
 from app.db.engine import create_tables
 from app.config import DEFAULT_IMAGE_GENERATOR
 
 
 def run_pipeline() -> Optional[Task]:
-    """Run the complete quote-image pipeline.
+    """Run the complete cosplay kitten image pipeline.
     
     Steps:
     1. Create task in database
-    2. Generate quote text
-    3. Generate image with quote
+    2. Generate cosplay kitten prompt
+    3. Generate image with cosplay kitten
     4. Mark task as completed
     
     Returns:
@@ -30,7 +30,7 @@ def run_pipeline() -> Optional[Task]:
     create_tables()
     
     # Initialize services
-    quote_generator = QuoteGenerator()
+    task_generator = TaskGenerator()
     image_generator = ImageGenerator()
     
     task: Optional[Task] = None
@@ -45,13 +45,13 @@ def run_pipeline() -> Optional[Task]:
         task.start_processing()
         task = save(task)
         
-        # Step 2: Generate quote and image prompt
-        quote_text = quote_generator.generate(task)
-        image_prompt = quote_generator.generate_image_prompt(quote_text)
-        task.mark_quote_ready(quote_text)
+        # Step 2: Generate cosplay kitten prompt and image prompt
+        cosplay_prompt = task_generator.generate(task)
+        image_prompt = task_generator.generate_image_prompt(cosplay_prompt)
+        task.mark_quote_ready(cosplay_prompt)
         task.image_generator_prompt = image_prompt
         task = save(task)
-        print(f"Generated quote for task {task.id}")
+        print(f"Generated cosplay kitten prompt for task {task.id}")
         print(f"Generated image prompt for task {task.id}")
         
         # Step 3: Generate image
@@ -60,7 +60,7 @@ def run_pipeline() -> Optional[Task]:
         task = save(task)
         print(f"Generated image for task {task.id}: {image_path}")
         
-        # Pipeline ends at IMAGE_READY (no publisher/scheduling in MVP)
+        # Pipeline ends at READY (no publisher/scheduling in MVP)
         print(f"Task {task.id} ready at status {task.status.value}")
         
         return task

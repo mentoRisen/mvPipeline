@@ -163,9 +163,13 @@ class ImageGeneratorPillow:
             
             draw.text((x, y), line, fill=text_color, font=font)
         
+        # Create task-specific folder
+        task_dir = self.output_dir / str(task.id)
+        task_dir.mkdir(parents=True, exist_ok=True)
+        
         # Save image
         image_filename = f"{task.id}.png"
-        image_path = self.output_dir / image_filename
+        image_path = task_dir / image_filename
         img.save(image_path, "PNG")
         
         return str(image_path)

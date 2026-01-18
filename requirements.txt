@@ -1,0 +1,7 @@
+sqlmodel
+python-dotenv
+pillow
+requests
+fastapi
+uvicorn[standard]
+pydantic>=2.0.0
