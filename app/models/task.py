@@ -9,6 +9,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from sqlmodel import SQLModel, Field, Column, JSON
+from sqlalchemy import String
 
 
 class TaskStatus(str, Enum):
@@ -55,33 +56,14 @@ class Task(SQLModel, table=True):
     # Status tracking
     status: TaskStatus = Field(
         default=TaskStatus.DRAFT,
-        description="Current status of the task"
+        sa_column=Column(String(50)),
+        description="Current status of the task (stored as string in database)"
     )
     
-    # Content fields
-    quote_text: Optional[str] = Field(
+    # Name
+    name: Optional[str] = Field(
         default=None,
-        description="Generated quote text"
-    )
-    
-    caption_text: Optional[str] = Field(
-        default=None,
-        description="Optional Instagram caption text"
-    )
-    
-    image_path: Optional[str] = Field(
-        default=None,
-        description="Path to generated image file"
-    )
-    
-    image_generator: Optional[str] = Field(
-        default=None,
-        description="Image generator to use (e.g., 'pillow', empty defaults to pillow)"
-    )
-    
-    image_generator_prompt: Optional[str] = Field(
-        default=None,
-        description="Prompt for external AI image generator (DALL-E, Midjourney, etc.)"
+        description="Task name/identifier"
     )
     
     # Scheduling
@@ -90,22 +72,23 @@ class Task(SQLModel, table=True):
         description="Optional scheduled publication time"
     )
     
-    # Error tracking
-    attempt_count: int = Field(
-        default=0,
-        description="Number of processing attempts"
-    )
-    
-    last_error: Optional[str] = Field(
-        default=None,
-        description="Last error message if task failed"
-    )
-    
     # Metadata
     meta: Optional[dict] = Field(
         default=None,
         sa_column=Column(JSON),
         description="Additional metadata as JSON"
+    )
+    
+    # Content fields
+    template: Optional[str] = Field(
+        default=None,
+        description="Template identifier or name"
+    )
+    
+    post: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Post content as JSON"
     )
     
     # Timestamps
@@ -126,8 +109,6 @@ class Task(SQLModel, table=True):
             error: Error message describing the failure
         """
         self.status = TaskStatus.FAILED
-        self.last_error = error
-        self.attempt_count += 1
         self.updated_at = datetime.utcnow()
     
     def mark_quote_ready(self, quote_text: str) -> None:
@@ -138,7 +119,6 @@ class Task(SQLModel, table=True):
         Args:
             quote_text: The generated quote text
         """
-        self.quote_text = quote_text
         self.updated_at = datetime.utcnow()
     
     def mark_image_ready(self, image_path: str) -> None:
@@ -149,7 +129,6 @@ class Task(SQLModel, table=True):
         Args:
             image_path: Path to the generated image file
         """
-        self.image_path = image_path
         self.status = TaskStatus.PENDING_CONFIRMATION
         self.updated_at = datetime.utcnow()
     
@@ -173,7 +152,6 @@ class Task(SQLModel, table=True):
         if self.status != TaskStatus.PENDING_APPROVAL:
             raise ValueError(f"Cannot approve task in status {self.status.value}")
         self.status = TaskStatus.PROCESSING
-        self.attempt_count += 1
         self.updated_at = datetime.utcnow()
     
     def disapprove_task(self) -> None:
@@ -210,7 +188,6 @@ class Task(SQLModel, table=True):
     def start_processing(self) -> None:
         """Mark task as being processed (internal use - use approve_for_processing for user actions)."""
         self.status = TaskStatus.PROCESSING
-        self.attempt_count += 1
         self.updated_at = datetime.utcnow()
     
     def request_confirmation(self) -> None:

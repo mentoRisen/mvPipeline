@@ -80,6 +80,29 @@ export const taskService = {
     })
     return response.data
   },
+
+  // Create job for a task
+  async createJob(taskId, jobData) {
+    const response = await api.post(`/tasks/${taskId}/jobs`, jobData)
+    return response.data
+  },
+
+  // Update job for a task
+  async updateJob(taskId, jobId, jobData) {
+    const response = await api.put(`/tasks/${taskId}/jobs/${jobId}`, jobData)
+    return response.data
+  },
+
+  // Delete job for a task
+  async deleteJob(taskId, jobId) {
+    await api.delete(`/tasks/${taskId}/jobs/${jobId}`)
+  },
+
+  // Process job for a task
+  async processJob(taskId, jobId) {
+    const response = await api.post(`/tasks/${taskId}/jobs/${jobId}/process`)
+    return response.data
+  },
 }
 
 export default api

@@ -10,7 +10,7 @@
       <TaskDetail
         v-if="selectedTaskId"
         :id="selectedTaskId"
-        key="detail"
+        :key="selectedTaskId"
       />
       <div v-else class="placeholder card">
         <h3>Select a task</h3>
@@ -37,7 +37,8 @@ export default {
   },
   methods: {
     handleSelectTask(id) {
-      this.selectedTaskId = id
+      // Ensure ID is a string and update selected task
+      this.selectedTaskId = String(id)
     },
   },
 }

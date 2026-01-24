@@ -23,15 +23,8 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 # Database configuration
-DB_PATH = Path(
-    os.getenv("DB_PATH", str(PROJECT_ROOT / "db.sqlite"))
-).resolve()
-"""SQLite database file path.
-    
-Defaults to `db.sqlite` in the project root. Can be overridden via
-DB_PATH environment variable. Path is resolved to absolute for cross-platform
-compatibility.
-"""
+DATABASE_URL = "mysql+pymysql://mentor:mentor@localhost:3306/mvpipeline"
+"""MySQL database connection URL."""
 
 # Output directories (created as Path objects, resolved to absolute)
 OUTPUT_DIR = PROJECT_ROOT / "output"

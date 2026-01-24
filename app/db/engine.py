@@ -1,16 +1,18 @@
-"""SQLite database engine and session factory for SQLModel."""
+"""MySQL database engine and session factory for SQLModel."""
 
 from sqlalchemy import create_engine
 from sqlmodel import SQLModel, Session
 
-from app.config import DB_PATH
+from app.config import DATABASE_URL
 
-# Create SQLite engine with check_same_thread=False for SQLModel compatibility
-# and echo=False for production (set to True for SQL query debugging)
+# Create MySQL engine with echo=False for production (set to True for SQL query debugging)
+# pool_pre_ping=True ensures connections are checked before use (handles stale connections)
+# pool_recycle=3600 recycles connections after 1 hour (prevents MySQL server timeout)
 engine = create_engine(
-    f"sqlite:///{DB_PATH}",
-    connect_args={"check_same_thread": False},
+    DATABASE_URL,
     echo=False,
+    pool_pre_ping=True,
+    pool_recycle=3600,
 )
 
 

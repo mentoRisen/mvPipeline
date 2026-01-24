@@ -2,9 +2,11 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api import routes
 from app.db.engine import create_tables
+from app.config import OUTPUT_DIR
 
 # Create FastAPI app
 app = FastAPI(
@@ -24,6 +26,13 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(routes.router)
+
+# Serve generated output files (images) under /output
+app.mount(
+    "/output",
+    StaticFiles(directory=str(OUTPUT_DIR)),
+    name="output",
+)
 
 
 @app.on_event("startup")

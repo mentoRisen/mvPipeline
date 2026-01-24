@@ -19,9 +19,6 @@
       </div>
     </div>
 
-    <div v-if="error" class="error">{{ error }}</div>
-    <div v-if="success" class="success">{{ success }}</div>
-
     <div v-if="loading" class="loading">Loading tasks...</div>
 
     <div v-else>
@@ -29,7 +26,7 @@
         <div class="tasks-table-header">
           <div class="col-id">ID</div>
           <div class="col-status">Status</div>
-          <div class="col-quote">Quote</div>
+          <div class="col-quote">Name</div>
           <div class="col-created">Created</div>
           <div class="col-actions">Actions</div>
         </div>
@@ -47,8 +44,8 @@
             <span :class="['badge', `badge-${task.status}`]">{{ task.status }}</span>
           </div>
           <div class="col-quote">
-            <span v-if="task.quote_text" class="quote-preview">{{ task.quote_text }}</span>
-            <span v-else class="muted">No quote text</span>
+            <span v-if="task.name" class="quote-preview">{{ task.name }}</span>
+            <span v-else class="muted">No name</span>
           </div>
           <div class="col-created">
             <small>{{ formatDate(task.created_at) }}</small>
@@ -110,19 +107,14 @@
         <h3>Create New Task</h3>
         <form @submit.prevent="createTask">
           <div class="form-group">
-            <label>Quote Text</label>
-            <textarea v-model="newTask.quote_text" rows="4"></textarea>
+            <label>Name <span class="required">*</span></label>
+            <input v-model="newTask.name" type="text" required />
           </div>
           <div class="form-group">
-            <label>Caption Text</label>
-            <input v-model="newTask.caption_text" type="text" />
-          </div>
-          <div class="form-group">
-            <label>Image Generator</label>
-            <select v-model="newTask.image_generator">
-              <option value="">Default (Pillow)</option>
-              <option value="pillow">Pillow</option>
-              <option value="dalle">DALL-E</option>
+            <label>Template <span class="required">*</span></label>
+            <select v-model="newTask.template" required>
+              <option value="">Select template</option>
+              <option value="instagram_post">Instagram Post</option>
             </select>
           </div>
           <div class="form-actions">
@@ -132,6 +124,19 @@
             <button type="submit" class="btn-primary">Create</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Error/Success Modal -->
+    <div v-if="error || success" class="modal-overlay" @click="dismissMessage">
+      <div class="modal-content message-modal" @click.stop>
+        <div :class="['message-content', error ? 'message-error' : 'message-success']">
+          <h3>{{ error ? 'Error' : 'Success' }}</h3>
+          <p>{{ error || success }}</p>
+          <div class="message-actions">
+            <button @click="dismissMessage" class="btn-primary">Close</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -157,10 +162,10 @@ export default {
       selectedStatus: '',
       showCreateModal: false,
       newTask: {
-        quote_text: '',
-        caption_text: '',
-        image_generator: '',
+        name: '',
+        template: '',
       },
+      messageTimeout: null,
     }
   },
   mounted() {
@@ -238,35 +243,62 @@ export default {
       }
     },
     async createTask() {
+      if (!this.newTask.name || !this.newTask.template) {
+        this.showError('Name and template are required')
+        return
+      }
       try {
         await taskService.createTask(this.newTask)
         this.showSuccess('Task created successfully')
         this.showCreateModal = false
-        this.newTask = { quote_text: '', caption_text: '', image_generator: '' }
+        this.newTask = { name: '', template: '' }
         this.loadTasks()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to create task')
       }
     },
     selectTask(id) {
-      this.$emit('select-task', id)
+      // Ensure ID is a string
+      const taskId = String(id)
+      this.$emit('select-task', taskId)
     },
     formatDate(dateString) {
       return new Date(dateString).toLocaleString()
     },
     showError(message) {
+      // Clear any existing timeout
+      if (this.messageTimeout) {
+        clearTimeout(this.messageTimeout)
+      }
       this.error = message
       this.success = null
-      setTimeout(() => {
+      // Auto-dismiss after 15 seconds (longer visibility)
+      this.messageTimeout = setTimeout(() => {
         this.error = null
-      }, 5000)
+        this.messageTimeout = null
+      }, 15000)
     },
     showSuccess(message) {
+      // Clear any existing timeout
+      if (this.messageTimeout) {
+        clearTimeout(this.messageTimeout)
+      }
       this.success = message
       this.error = null
-      setTimeout(() => {
+      // Auto-dismiss after 10 seconds (longer visibility)
+      this.messageTimeout = setTimeout(() => {
         this.success = null
-      }, 3000)
+        this.messageTimeout = null
+      }, 10000)
+    },
+    dismissMessage() {
+      // Clear timeout if message is manually dismissed
+      if (this.messageTimeout) {
+        clearTimeout(this.messageTimeout)
+        this.messageTimeout = null
+      }
+      this.error = null
+      this.success = null
     },
   },
 }
@@ -400,9 +432,46 @@ export default {
   color: #374151;
 }
 
+.required {
+  color: #ef4444;
+}
+
 .form-actions {
   display: flex;
   gap: 1rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+.message-modal {
+  max-width: 450px;
+}
+
+.message-content {
+  padding: 1rem 0;
+}
+
+.message-content h3 {
+  margin-bottom: 1rem;
+  font-size: 1.25rem;
+}
+
+.message-content p {
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+  word-wrap: break-word;
+}
+
+.message-error h3 {
+  color: #991b1b;
+}
+
+.message-success h3 {
+  color: #065f46;
+}
+
+.message-actions {
+  display: flex;
   justify-content: flex-end;
   margin-top: 1.5rem;
 }

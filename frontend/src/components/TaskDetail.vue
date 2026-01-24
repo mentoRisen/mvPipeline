@@ -4,123 +4,282 @@
       <h2>Task Detail</h2>
       <div class="header-actions" v-if="task">
         <span :class="['badge', `badge-${task?.status}`]">{{ task?.status }}</span>
+        <button
+          v-if="task.status === 'draft'"
+          @click="submitTask"
+          class="btn-primary"
+        >
+          Submit for Approval
+        </button>
+        <button
+          v-if="task.status === 'pending_approval'"
+          @click="approveProcessing"
+          class="btn-success"
+        >
+          Approve for Processing
+        </button>
+        <button
+          v-if="task.status === 'pending_approval'"
+          @click="disapproveTask"
+          class="btn-danger"
+        >
+          Disapprove
+        </button>
+        <button
+          v-if="task.status === 'pending_confirmation'"
+          @click="approvePublication"
+          class="btn-success"
+        >
+          Approve for Publication
+        </button>
+        <button
+          v-if="task.status === 'pending_confirmation'"
+          @click="rejectTask"
+          class="btn-danger"
+        >
+          Reject
+        </button>
+        <button
+          v-if="task.status === 'ready'"
+          @click="publishTask"
+          class="btn-success"
+        >
+          Publish
+        </button>
         <button @click="deleteTask" class="btn-danger">Delete</button>
       </div>
     </div>
 
-    <div v-if="loading" class="loading">Loading task...</div>
-    <div v-if="error" class="error">{{ error }}</div>
-    <div v-if="success" class="success">{{ success }}</div>
-
     <div v-if="task" class="task-detail-content">
-      <div class="card">
-        <h3>Task Details</h3>
-        <form @submit.prevent="updateTask">
-          <div class="form-group">
-            <label>Status</label>
-            <input :value="task.status" disabled />
+      <form @submit.prevent="updateTask" class="card">
+        <h3>Task Information</h3>
+        <div class="form-group">
+          <label>Template</label>
+          <input :value="task.template || 'Not set'" disabled />
+        </div>
+        <div class="form-group">
+          <label>Name</label>
+          <input v-model="editTask.name" type="text" />
+        </div>
+        <div class="form-group">
+          <label>Theme</label>
+          <input v-model="editTask.theme" type="text" placeholder="Enter theme" />
+        </div>
+        <div class="form-group">
+          <label>Caption</label>
+          <textarea
+            v-model="editTask.caption"
+            rows="4"
+            placeholder="Enter caption text"
+          ></textarea>
+        </div>
+
+        <!-- Jobs table -->
+        <div class="form-group jobs-section">
+          <div class="jobs-header">
+            <label>Jobs</label>
+            <button
+              type="button"
+              class="btn-secondary btn-small"
+              @click="createJob"
+            >
+              Create Job
+            </button>
           </div>
-          <div class="form-group">
-            <label>Quote Text</label>
-            <textarea v-model="editTask.quote_text" rows="4"></textarea>
+          <div class="jobs-table-wrapper">
+            <table class="jobs-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Status</th>
+                  <th>Generator</th>
+                  <th>Purpose</th>
+                  <th>Prompt</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template v-if="task.jobs && task.jobs.length">
+                  <tr v-for="job in task.jobs" :key="job.id">
+                    <td class="mono job-id-clickable" @click="copyJobId(job.id)" :title="`Click to copy full ID: ${job.id}`">
+                      {{ job.id?.slice(0, 8) }}
+                    </td>
+                    <td>
+                      <span :class="['badge', `badge-${job.status}`]">
+                        {{ job.status }}
+                      </span>
+                    </td>
+                    <td>{{ job.generator || '—' }}</td>
+                    <td class="jobs-purpose">
+                      {{ job.purpose || '—' }}
+                    </td>
+                    <td class="jobs-prompt">
+                      <span v-if="!job.prompt?.prompt">—</span>
+                      <span v-else>
+                        <span v-if="expandedPrompts[job.id]">
+                          {{ job.prompt.prompt }}
+                        </span>
+                        <span v-else>
+                          {{ truncatePrompt(job.prompt.prompt) }}
+                          <button
+                            type="button"
+                            class="link-button"
+                            @click="togglePrompt(job.id)"
+                          >
+                            ... more
+                          </button>
+                        </span>
+                      </span>
+                    </td>
+                    <td>{{ formatDate(job.created_at) }}</td>
+                    <td class="jobs-actions">
+                      <button
+                        v-if="job.status === 'new' || job.status === 'error'"
+                        type="button"
+                        class="btn-small btn-success"
+                        @click="setJobReady(job)"
+                      >
+                        Ready
+                      </button>
+                      <button
+                        v-if="job.status === 'ready'"
+                        type="button"
+                        class="btn-small btn-primary"
+                        :disabled="processingJobs[job.id]"
+                        @click="processJob(job)"
+                      >
+                        {{ processingJobs[job.id] ? 'Processing…' : 'Process' }}
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-small btn-secondary"
+                        @click="editJob(job)"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-small btn-danger"
+                        @click="deleteJob(job)"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                </template>
+                <tr v-else>
+                  <td class="jobs-empty" colspan="7">No jobs yet</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          <div class="form-group">
-            <label>Caption Text</label>
-            <input v-model="editTask.caption_text" type="text" />
-          </div>
-          <div class="form-group">
-            <label>Image Generator</label>
-            <select v-model="editTask.image_generator">
-              <option value="">Default (Pillow)</option>
-              <option value="pillow">Pillow</option>
-              <option value="dalle">DALL-E</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Image Generator Prompt</label>
-            <textarea v-model="editTask.image_generator_prompt" rows="3"></textarea>
-          </div>
-          <div class="form-group">
-            <label>Image Path</label>
-            <input :value="task.image_path || 'Not generated'" disabled />
-            <a v-if="task.image_path" :href="getImageUrl(task.image_path)" target="_blank" class="image-link">
-              View Image
-            </a>
-          </div>
-          <div class="form-group">
-            <label>Attempt Count</label>
-            <input :value="task.attempt_count" disabled />
-          </div>
-          <div class="form-group" v-if="task.last_error">
-            <label>Last Error</label>
-            <textarea :value="task.last_error" disabled rows="3"></textarea>
-          </div>
-          <div class="form-group">
-            <label>Created At</label>
-            <input :value="formatDate(task.created_at)" disabled />
-          </div>
-          <div class="form-group">
-            <label>Updated At</label>
-            <input :value="formatDate(task.updated_at)" disabled />
-          </div>
-          <div class="form-actions">
-            <button type="submit" class="btn-primary">Update Task</button>
-          </div>
-        </form>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Update Task</button>
+        </div>
+      </form>
+
+      <div class="card" v-if="task.meta">
+        <h3>Meta</h3>
+        <div class="json-display">
+          <pre>{{ formatJson(task.meta) }}</pre>
+        </div>
       </div>
 
-      <div class="card">
-        <h3>Status Actions</h3>
-        <div class="status-actions">
-          <button
-            v-if="task.status === 'draft'"
-            @click="submitTask"
-            class="btn-primary"
-          >
-            Submit for Approval
-          </button>
-          <button
-            v-if="task.status === 'pending_approval'"
-            @click="approveProcessing"
-            class="btn-success"
-          >
-            Approve for Processing
-          </button>
-          <button
-            v-if="task.status === 'pending_approval'"
-            @click="disapproveTask"
-            class="btn-danger"
-          >
-            Disapprove
-          </button>
-          <button
-            v-if="task.status === 'pending_confirmation'"
-            @click="approvePublication"
-            class="btn-success"
-          >
-            Approve for Publication
-          </button>
-          <button
-            v-if="task.status === 'pending_confirmation'"
-            @click="rejectTask"
-            class="btn-danger"
-          >
-            Reject
-          </button>
-          <button
-            v-if="task.status === 'ready'"
-            @click="publishTask"
-            class="btn-success"
-          >
-            Publish
-          </button>
-          <p v-if="getAvailableActions().length === 0" class="no-actions">
-            No actions available for this status
-          </p>
+      <div class="card" v-if="task.post">
+        <h3>Post</h3>
+        <div class="json-display">
+          <pre>{{ formatJson(task.post) }}</pre>
         </div>
       </div>
     </div>
+
+    <!-- Create/Edit Job Modal -->
+    <div v-if="showJobModal" class="modal-overlay" @click="cancelJob">
+      <div class="modal-content" @click.stop>
+        <h3>{{ editingJobId ? 'Edit Job' : 'Create Job' }}</h3>
+        <form @submit.prevent="submitJob">
+          <div class="form-group">
+            <label>Status</label>
+            <input type="text" :value="currentJobStatus || 'new'" disabled />
+          </div>
+          <div class="form-group">
+            <label>Generator</label>
+            <select v-model="newJob.generator">
+              <option value="dalle">dalle</option>
+              <option value="gptimage15">gptimage15</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Purpose</label>
+            <select v-model="newJob.purpose">
+              <option value="imagecontent">imagecontent</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Prompt</label>
+            <textarea
+              v-model="newJob.promptText"
+              rows="3"
+              placeholder="Enter prompt"
+            ></textarea>
+          </div>
+          <div class="form-group" v-if="editingJobId">
+            <label>Result</label>
+            <div class="json-display">
+              <textarea
+                v-model="currentJobResultText"
+                rows="6"
+                class="json-textarea"
+                placeholder="Edit job result JSON"
+              ></textarea>
+              <div
+                v-if="currentJobResult && getJobImageUrl(currentJobResult)"
+                class="image-preview"
+              >
+                <label>Generated Image</label>
+                <a
+                  :href="getJobImageUrl(currentJobResult)"
+                  target="_blank"
+                  rel="noopener"
+                  class="image-link"
+                >
+                  <img
+                    :src="getJobImageUrl(currentJobResult)"
+                    alt="Generated image"
+                    class="image-preview-img"
+                  />
+                </a>
+              </div>
+            </div>
+          </div>
+          <div class="form-actions modal-actions">
+            <button
+              type="button"
+              class="btn-secondary"
+              @click="cancelJob"
+            >
+              Cancel
+            </button>
+            <button type="submit" class="btn-primary">
+              {{ editingJobId ? 'Update' : 'Create' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
+
+  <!-- Compact top-of-screen toast for error/success messages -->
+  <transition name="toast-fade">
+    <div v-if="error || success" class="toast-container">
+      <div :class="['toast', error ? 'toast-error' : 'toast-success']">
+        {{ error || success }}
+      </div>
+    </div>
+  </transition>
 </template>
 
 <script>
@@ -137,14 +296,39 @@ export default {
   data() {
     return {
       task: null,
-      editTask: {},
+      editTask: {
+        name: '',
+        theme: '',
+        caption: '',
+      },
       loading: false,
       error: null,
       success: null,
+      showJobModal: false,
+      editingJobId: null,
+      expandedPrompts: {},
+      currentJobResult: null,
+      currentJobStatus: null,
+      currentJobResultText: '',
+      newJob: {
+        generator: 'dalle',
+        purpose: 'imagecontent',
+        promptText: '',
+      },
+      // Per-job processing state for showing a loading indicator on the Process button
+      processingJobs: {},
     }
   },
   mounted() {
     this.loadTask()
+  },
+  watch: {
+    // Watch for id changes to reload task data
+    id(newId, oldId) {
+      if (newId && newId !== oldId) {
+        this.loadTask()
+      }
+    },
   },
   methods: {
     async loadTask() {
@@ -153,10 +337,9 @@ export default {
       try {
         this.task = await taskService.getTask(this.id)
         this.editTask = {
-          quote_text: this.task.quote_text || '',
-          caption_text: this.task.caption_text || '',
-          image_generator: this.task.image_generator || '',
-          image_generator_prompt: this.task.image_generator_prompt || '',
+          name: this.task.name || '',
+          theme: (this.task.meta && this.task.meta.theme) || '',
+          caption: (this.task.post && this.task.post.caption) || '',
         }
       } catch (err) {
         this.error = err.response?.data?.detail || err.message || 'Failed to load task'
@@ -166,8 +349,34 @@ export default {
     },
     async updateTask() {
       try {
-        this.task = await taskService.updateTask(this.id, this.editTask)
+        // Get current meta or create empty object
+        const currentMeta = this.task.meta || {}
+        
+        // Update meta with new theme value
+        const updatedMeta = {
+          ...currentMeta,
+          theme: this.editTask.theme || null,
+        }
+        
+        // Get current post or create empty object
+        const currentPost = this.task.post || {}
+        
+        // Update post with new caption value
+        const updatedPost = {
+          ...currentPost,
+          caption: this.editTask.caption || null,
+        }
+        
+        const updateData = {
+          name: this.editTask.name || null,
+          meta: updatedMeta,
+          post: updatedPost,
+        }
+        
+        this.task = await taskService.updateTask(this.id, updateData)
         this.showSuccess('Task updated successfully')
+        // Reload to get updated data
+        this.loadTask()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to update task')
       }
@@ -231,29 +440,176 @@ export default {
         this.showError(err.response?.data?.detail || 'Failed to reject task')
       }
     },
-    getAvailableActions() {
-      if (!this.task) return []
-      const actions = []
-      if (this.task.status === 'draft') actions.push('submit')
-      if (this.task.status === 'pending_approval') {
-        actions.push('approve', 'disapprove')
-      }
-      if (this.task.status === 'pending_confirmation') {
-        actions.push('approvePublication', 'reject')
-      }
-      if (this.task.status === 'ready') actions.push('publish')
-      return actions
-    },
     formatDate(dateString) {
       return new Date(dateString).toLocaleString()
     },
-    getImageUrl(imagePath) {
-      // Assuming images are served from the backend or a static server
-      // Adjust this based on your setup
-      if (imagePath.startsWith('http')) {
-        return imagePath
+    formatJson(obj) {
+      if (!obj) return ''
+      return JSON.stringify(obj, null, 2)
+    },
+    getJobImageUrl(result) {
+      const rel = result?.image_path || result?.image_path_relative
+      if (!rel) return null
+      // Same base as API, but strip /api/v1 if present
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+      const root = apiBase.replace(/\/api\/v1\/?$/, '')
+      return root + rel
+    },
+    truncatePrompt(text) {
+      if (!text) return ''
+      const words = text.split(/\s+/)
+      if (words.length <= 5) return text
+      return words.slice(0, 5).join(' ')
+    },
+    togglePrompt(jobId) {
+      if (this.expandedPrompts[jobId]) {
+        delete this.expandedPrompts[jobId]
+      } else {
+        this.expandedPrompts[jobId] = true
       }
-      return `http://localhost:8000/${imagePath}`
+    },
+    async setJobReady(job) {
+      try {
+        await taskService.updateJob(this.id, job.id, { status: 'ready' })
+        this.showSuccess('Job status updated to ready')
+        // Reload task to show updated job status
+        this.loadTask()
+      } catch (err) {
+        this.showError(
+          err.response?.data?.detail || err.message || 'Failed to update job status'
+        )
+      }
+    },
+    async processJob(job) {
+      try {
+        // Mark this job as processing to update the UI
+        this.$set
+          ? this.$set(this.processingJobs, job.id, true)
+          : (this.processingJobs = { ...this.processingJobs, [job.id]: true })
+
+        await taskService.processJob(this.id, job.id)
+        this.showSuccess('Job processed')
+      } catch (err) {
+        this.showError(
+          err.response?.data?.detail || err.message || 'Failed to process job'
+        )
+      } finally {
+        // Clear processing state for this job
+        if (this.$delete) {
+          this.$delete(this.processingJobs, job.id)
+        } else {
+          const { [job.id]: _, ...rest } = this.processingJobs
+          this.processingJobs = rest
+        }
+        // Always reload task to reflect updated job status/result,
+        // even when processing fails and job moves to ERROR.
+        this.loadTask()
+      }
+    },
+    async deleteJob(job) {
+      if (!confirm(`Are you sure you want to delete this job?`)) {
+        return
+      }
+      try {
+        await taskService.deleteJob(this.id, job.id)
+        this.showSuccess('Job deleted successfully')
+        // Reload task to show updated job list
+        this.loadTask()
+      } catch (err) {
+        this.showError(
+          err.response?.data?.detail || err.message || 'Failed to delete job'
+        )
+      }
+    },
+    createJob() {
+      // Open job creation modal
+      this.editingJobId = null
+      this.showJobModal = true
+      this.newJob = {
+        generator: 'dalle',
+        purpose: 'imagecontent',
+        promptText: '',
+      }
+    },
+    editJob(job) {
+      // Open job edit modal with job data
+      this.editingJobId = job.id
+      this.currentJobResult = job.result || null
+      this.currentJobStatus = job.status || 'new'
+      this.currentJobResultText = this.currentJobResult
+        ? this.formatJson(this.currentJobResult)
+        : ''
+      this.showJobModal = true
+      this.newJob = {
+        generator: job.generator || 'dalle',
+        purpose: job.purpose || 'imagecontent',
+        promptText: job.prompt?.prompt || '',
+      }
+    },
+    cancelJob() {
+      this.showJobModal = false
+      this.editingJobId = null
+      this.currentJobResult = null
+      this.currentJobStatus = null
+      this.currentJobResultText = ''
+      this.newJob = {
+        generator: 'dalle',
+        purpose: 'imagecontent',
+        promptText: '',
+      }
+    },
+    async submitJob() {
+      if (!this.newJob.generator) {
+        this.showError('Generator is required')
+        return
+      }
+
+      try {
+        // Build payload (status is set automatically on backend for new jobs)
+        const payload = {
+          generator: this.newJob.generator,
+          purpose: this.newJob.purpose || null,
+          prompt: this.newJob.promptText
+            ? { prompt: this.newJob.promptText }
+            : null,
+        }
+
+        // When editing an existing job, allow updating the result JSON
+        if (this.editingJobId && this.currentJobResultText.trim()) {
+          try {
+            payload.result = JSON.parse(this.currentJobResultText)
+          } catch (e) {
+            this.showError('Result must be valid JSON')
+            return
+          }
+        }
+
+        if (this.editingJobId) {
+          // Update existing job
+          await taskService.updateJob(this.id, this.editingJobId, payload)
+          this.showSuccess('Job updated successfully')
+        } else {
+          // Create new job
+          await taskService.createJob(this.id, payload)
+          this.showSuccess('Job created successfully')
+        }
+
+        // Reset form
+        this.newJob = {
+          generator: 'dalle',
+          purpose: 'imagecontent',
+          promptText: '',
+        }
+        this.editingJobId = null
+        this.showJobModal = false
+
+        // Reload task to show updated job
+        this.loadTask()
+      } catch (err) {
+        this.showError(
+          err.response?.data?.detail || err.message || `Failed to ${this.editingJobId ? 'update' : 'create'} job`
+        )
+      }
     },
     showError(message) {
       this.error = message
@@ -268,6 +624,25 @@ export default {
       setTimeout(() => {
         this.success = null
       }, 3000)
+    },
+    async copyJobId(jobId) {
+      try {
+        await navigator.clipboard.writeText(jobId)
+      } catch (err) {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea')
+        textArea.value = jobId
+        textArea.style.position = 'fixed'
+        textArea.style.opacity = '0'
+        document.body.appendChild(textArea)
+        textArea.select()
+        try {
+          document.execCommand('copy')
+        } catch (fallbackErr) {
+          // Silently fail
+        }
+        document.body.removeChild(textArea)
+      }
     },
   },
 }
@@ -298,15 +673,7 @@ export default {
 }
 
 .task-detail-content {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 2rem;
-}
-
-@media (max-width: 1024px) {
-  .task-detail-content {
-    grid-template-columns: 1fr;
-  }
+  display: block;
 }
 
 .form-group {
@@ -327,22 +694,208 @@ export default {
   text-decoration: none;
 }
 
-.image-link:hover {
-  text-decoration: underline;
-}
-
-.status-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.no-actions {
-  color: #999;
-  font-style: italic;
-}
-
 .form-actions {
   margin-top: 1.5rem;
+}
+
+.json-display {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.json-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 0.85rem;
+}
+
+.image-preview {
+  margin-top: 1rem;
+}
+
+.image-preview-img {
+  max-width: 100%;
+  max-height: 240px;
+  display: block;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+}
+
+.json-display pre {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: #333;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.jobs-section {
+  margin-top: 2rem;
+}
+
+.jobs-table-wrapper {
+  overflow-x: auto;
+}
+
+.jobs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.jobs-table th,
+.jobs-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.jobs-table th {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+  background-color: #f9fafb;
+}
+
+.jobs-table tr:hover {
+  background-color: #f3f4f6;
+}
+
+.jobs-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.jobs-purpose {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jobs-prompt {
+  max-width: 300px;
+  word-wrap: break-word;
+  line-height: 1.4;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #667eea;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 0.25rem;
+  text-decoration: underline;
+  font-size: inherit;
+}
+
+.link-button:hover {
+  color: #5568d3;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 0.8rem;
+}
+
+.job-id-clickable {
+  cursor: pointer;
+  color: #667eea;
+  text-decoration: underline;
+  user-select: none;
+}
+
+.job-id-clickable:hover {
+  color: #5568d3;
+  background-color: #f3f4f6;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  padding: 2rem;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-content h3 {
+  margin-bottom: 1.5rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+
+/* Top-of-screen toast messages */
+.toast-container {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  pointer-events: none;
+}
+
+.toast {
+  min-width: 260px;
+  max-width: 420px;
+  background: #111827;
+  color: #f9fafb;
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  box-shadow: 0 10px 15px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.toast-error {
+  background: #7f1d1d;
+}
+
+.toast-success {
+  background: #064e3b;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -10px);
 }
 </style>

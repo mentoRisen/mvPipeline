@@ -34,13 +34,79 @@ Minimal Python pipeline for generating quote images for Instagram posts.
 
 ## Database
 
-SQLite database location: `db.sqlite` in the project root.
+### MySQL Setup
 
-Can be overridden via `DB_PATH` environment variable.
+The application uses MySQL for data storage. Make sure MySQL is installed and running on your system.
+
+1. **Create the database** (if it doesn't exist):
+   ```bash
+   mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS mvpipeline;"
+   ```
+   Or connect to MySQL and run:
+   ```sql
+   CREATE DATABASE IF NOT EXISTS mvpipeline;
+   ```
+
+2. **Configure the connection**:
+   
+   The default connection string is: `mysql+pymysql://root@localhost:3306/mvpipeline`
+   
+   You can override it via the `DATABASE_URL` environment variable or in your `.env` file:
+   ```
+   DATABASE_URL=mysql+pymysql://username:password@host:port/database
+   ```
+   
+   Examples:
+   ```
+   DATABASE_URL=mysql+pymysql://root@localhost/mvpipeline
+   DATABASE_URL=mysql+pymysql://myuser:mypassword@localhost:3306/mydb
+   ```
+   
+   The format is: `mysql+pymysql://user:password@host:port/database`
 
 ## Running
 
-### API Server
+### Quick Start (Recommended)
+
+**Start both servers (background mode):**
+```bash
+./startup.sh
+```
+
+**Start both servers (foreground mode):**
+```bash
+./startup.sh -f
+# or
+./startup.sh --foreground
+```
+
+**Start only API server:**
+```bash
+./startup.sh --api
+# or
+./startup.sh -api
+```
+
+**Start only Frontend server:**
+```bash
+./startup.sh --gui
+# or
+./startup.sh -gui
+```
+
+**Combine options:**
+```bash
+./startup.sh --api --foreground    # Start only API in foreground
+./startup.sh --gui -f              # Start only Frontend in foreground
+```
+
+By default, servers run in the background with logs in `logs/`. Use `-f` or `--foreground` to run in the current terminal. Press `Ctrl+C` to stop.
+
+**Note:** This script is Linux and Bash only.
+
+### Manual Start
+
+#### API Server
 
 Start the FastAPI server:
 ```bash
@@ -57,7 +123,7 @@ The API will be available at:
 - Interactive docs: http://localhost:8000/docs
 - OpenAPI schema: http://localhost:8000/openapi.json
 
-### Frontend (Vue.js)
+#### Frontend (Vue.js)
 
 The Vue frontend is located in the `frontend/` directory. To run it:
 
