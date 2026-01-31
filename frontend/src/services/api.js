@@ -73,6 +73,11 @@ export const taskService = {
     return response.data
   },
 
+  async overrideProcessing(id) {
+    const response = await api.post(`/tasks/${id}/override-processing`)
+    return response.data
+  },
+
   // Get tasks by status
   async getTasksByStatus(status, limit = 100) {
     const response = await api.get(`/tasks/status/${status}`, {
@@ -101,6 +106,12 @@ export const taskService = {
   // Process job for a task
   async processJob(taskId, jobId) {
     const response = await api.post(`/tasks/${taskId}/jobs/${jobId}/process`)
+    return response.data
+  },
+
+  // Get template JSON structure
+  async getTemplate(templateName) {
+    const response = await api.get(`/templates/${templateName}`)
     return response.data
   },
 }

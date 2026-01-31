@@ -1,5 +1,6 @@
 """FastAPI routes for task management API."""
 
+import logging
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -7,6 +8,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+
+logger = logging.getLogger(__name__)
 
 from app.models.task import Task, TaskStatus
 from app.models.job import Job, JobStatus
@@ -110,9 +113,13 @@ def get_task(task_id: UUID):
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     
-    # Load jobs for this task (oldest first)
+    # Load jobs for this task ordered by custom order (descending), then by creation time (oldest first)
     with Session(engine) as session:
-        statement = select(Job).where(Job.task_id == task_id).order_by(Job.created_at.asc())
+        statement = (
+            select(Job)
+            .where(Job.task_id == task_id)
+            .order_by(Job.order.desc(), Job.created_at.asc())
+        )
         jobs = list(session.exec(statement).all())
     
     # Create task response with jobs
@@ -150,16 +157,39 @@ def create_task(task_data: TaskCreate):
         if task_data.meta is not None:
             task.meta.update(task_data.meta)
         
+        # Merge provided post if specified (e.g., caption from JSON)
+        if task_data.post is not None:
+            if task.post is None:
+                task.post = {}
+            if isinstance(task.post, dict):
+                task.post.update(task_data.post)
+        
         # Set optional fields if provided (legacy support)
-        if task_data.quote_text is not None:
-            if task.meta:
-                task.meta["quote_text"] = task_data.quote_text
-        if task_data.caption_text is not None:
-            if task.meta:
-                task.meta["caption_text"] = task_data.caption_text
-        if task_data.image_generator is not None:
-            if task.meta:
-                task.meta["image_generator"] = task_data.image_generator
+        if task_data.quote_text is not None and task.meta is not None:
+            task.meta["quote_text"] = task_data.quote_text
+        if task_data.caption_text is not None and task.meta is not None:
+            task.meta["caption_text"] = task_data.caption_text
+        if task_data.image_generator is not None and task.meta is not None:
+            task.meta["image_generator"] = task_data.image_generator
+
+        # Ensure caption from caption_text and/or meta is also reflected in task.post.caption
+        # so the frontend can display it consistently.
+        caption_value = None
+        if task_data.caption_text:
+            caption_value = task_data.caption_text
+        elif task.meta and isinstance(task.meta, dict):
+            # Fallback: if caption_text is embedded in meta
+            meta_caption = task.meta.get("caption_text")
+            if isinstance(meta_caption, str) and meta_caption.strip():
+                caption_value = meta_caption
+
+        if caption_value:
+            if task.post is None:
+                task.post = {}
+            if isinstance(task.post, dict):
+                # Only set if not already populated by the template/JSON
+                if not task.post.get("caption"):
+                    task.post["caption"] = caption_value
         
         task = task_repo.save(task)
         return TaskResponse.model_validate(task)
@@ -209,6 +239,8 @@ def update_task(task_id: UUID, task_data: TaskUpdate):
 def delete_task(task_id: UUID):
     """Delete a task.
     
+    Deletes all associated jobs first, then deletes the task.
+    
     Args:
         task_id: UUID of the task to delete
         
@@ -220,6 +252,13 @@ def delete_task(task_id: UUID):
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     
     with Session(engine) as session:
+        # First, delete all jobs associated with this task
+        statement = select(Job).where(Job.task_id == task_id)
+        jobs = list(session.exec(statement).all())
+        for job in jobs:
+            session.delete(job)
+        
+        # Then delete the task
         session.delete(task)
         session.commit()
     
@@ -318,7 +357,8 @@ def approve_task_for_publication(task_id: UUID):
 def publish_task(task_id: UUID):
     """Publish a task.
     
-    Moves task from READY to PUBLISHED.
+    Publishes task using the publisher service. Can be called from READY, PUBLISHING, or FAILED status.
+    The publisher service handles status transitions (READY/PUBLISHING/FAILED -> PUBLISHING -> PUBLISHED/FAILED).
     
     Args:
         task_id: UUID of the task to publish
@@ -327,13 +367,32 @@ def publish_task(task_id: UUID):
         Updated task
         
     Raises:
-        HTTPException: 404 if task not found, 400 if invalid status transition
+        HTTPException: 404 if task not found, 400 if invalid status or publishing fails
     """
+    # Get task
+    task = task_repo.get_task_by_id(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    
+    # Check if task is in a valid state for publishing
+    if task.status not in (TaskStatus.READY, TaskStatus.PUBLISHING, TaskStatus.FAILED):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot publish task in status '{task.status}'. Task must be in 'ready', 'publishing', or 'failed' status."
+        )
+    
     try:
-        task = task_repo.publish_task(task_id)
+        # Use the publisher service to publish the task
+        from app.services.tasks.publisher import publish_task as publish_task_service
+        publish_task_service(task)
+        
+        # Reload task to get updated status
+        task = task_repo.get_task_by_id(task_id)
         return TaskResponse.model_validate(task)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to publish task: {str(e)}")
 
 
 @router.post("/tasks/{task_id}/reject", response_model=TaskResponse)
@@ -353,6 +412,28 @@ def reject_task(task_id: UUID):
     """
     try:
         task = task_repo.reject_task(task_id)
+        return TaskResponse.model_validate(task)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/tasks/{task_id}/override-processing", response_model=TaskResponse)
+def override_task_processing(task_id: UUID):
+    """Override processing and move task to PENDING_CONFIRMATION.
+    
+    Moves task from PROCESSING to PENDING_CONFIRMATION regardless of generator state.
+    
+    Args:
+        task_id: UUID of the task to override
+        
+    Returns:
+        Updated task
+        
+    Raises:
+        HTTPException: 404 if task not found, 400 if invalid status transition
+    """
+    try:
+        task = task_repo.override_task_processing(task_id)
         return TaskResponse.model_validate(task)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -400,10 +481,16 @@ def create_job(task_id: UUID, job_data: JobCreate):
     Raises:
         HTTPException: 404 if task not found, 400 if validation or database error occurs
     """
+    logger.info(f"[create_job] Creating job for task {task_id}")
+    logger.debug(f"[create_job] Job data: generator={job_data.generator}, purpose={job_data.purpose}, prompt={job_data.prompt}")
+    
     # Verify task exists
     task = task_repo.get_task_by_id(task_id)
     if not task:
+        logger.warning(f"[create_job] Task {task_id} not found")
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    
+    logger.info(f"[create_job] Task {task_id} found, creating job")
     
     try:
         # Create job
@@ -412,7 +499,16 @@ def create_job(task_id: UUID, job_data: JobCreate):
         job.generator = job_data.generator
         job.purpose = job_data.purpose
         job.prompt = job_data.prompt
+        # Use explicit order if provided, otherwise default to 0
+        if job_data.order is not None:
+            job.order = job_data.order
         job.status = JobStatus.NEW
+        
+        logger.debug(f"[create_job] Job object created: generator={job.generator}, purpose={job.purpose}, status={job.status}")
+        if job.prompt:
+            logger.debug(f"[create_job] Job prompt structure: {type(job.prompt)}, keys={job.prompt.keys() if isinstance(job.prompt, dict) else 'N/A'}")
+            if isinstance(job.prompt, dict) and 'prompt' in job.prompt:
+                logger.debug(f"[create_job] Job prompt.prompt value: {job.prompt.get('prompt', 'N/A')[:100]}...")
         
         # Save job
         with Session(engine) as session:
@@ -420,12 +516,16 @@ def create_job(task_id: UUID, job_data: JobCreate):
             session.commit()
             session.refresh(job)
         
+        logger.info(f"[create_job] Job created successfully: job_id={job.id}, task_id={task_id}, generator={job.generator}")
         return JobResponse.model_validate(job)
     except IntegrityError as e:
+        logger.error(f"[create_job] Database integrity error for task {task_id}: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
     except SQLAlchemyError as e:
+        logger.error(f"[create_job] Database error for task {task_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     except Exception as e:
+        logger.error(f"[create_job] Unexpected error creating job for task {task_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Unexpected error creating job: {str(e)}")
 
 
@@ -467,6 +567,8 @@ def update_job(task_id: UUID, job_id: UUID, job_data: JobUpdate):
                 job.prompt = job_data.prompt
             if job_data.status is not None:
                 job.status = job_data.status
+            if job_data.order is not None:
+                job.order = job_data.order
             # Allow updating result JSON (e.g., edited in the UI)
             if job_data.result is not None:
                 job.result = job_data.result
@@ -578,3 +680,54 @@ def process_job(task_id: UUID, job_id: UUID):
             status_code=500,
             detail=str(e),
         )
+
+
+@router.get("/templates/{template_name}")
+def get_template(template_name: str):
+    """Get template JSON structure for creating a task.
+    
+    Returns a JSON template that includes:
+    - Task fields (name, template, meta, post)
+    - One example job for image generation
+    
+    Args:
+        template_name: Name of the template (e.g., 'instagram_post')
+        
+    Returns:
+        JSON template structure with task and one job
+        
+    Raises:
+        HTTPException: 400 if template name is not recognized
+    """
+    try:
+        template_instance = get_template_instance(template_name)
+        
+        # Build template JSON with task and one image job
+        # Include default values with explanations for meta and post fields
+        meta = template_instance.getEmptyMeta()
+        post = template_instance.getEmptyPost()
+        
+        # Add default values with explanations for Instagram post template
+        if template_name == "instagram_post":
+            meta["theme"] = "Enter theme here - This field defines the overall theme or topic for the Instagram post (e.g., 'motivation', 'inspiration', 'business')"
+            post["caption"] = "Enter caption here - This field contains the text caption that will accompany the Instagram post image"
+        
+        template_json = {
+            "name": "",
+            "template": template_name,
+            "meta": meta,
+            "post": post,
+            "jobs": [
+                {
+                    "generator": "dalle",
+                    "purpose": "imagecontent",
+                    "prompt": {
+                        "prompt": "Enter image generation prompt here - This field contains the text prompt that will be sent to the image generator (e.g., DALL-E) to create the image for the Instagram post"
+                    }
+                }
+            ]
+        }
+        
+        return template_json
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

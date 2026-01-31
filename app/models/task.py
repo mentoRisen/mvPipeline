@@ -22,7 +22,9 @@ class TaskStatus(str, Enum):
         PROCESSING -> PENDING_CONFIRMATION (when quote and image generation complete)
         PENDING_CONFIRMATION -> READY (when user confirms/approves the content)
         PENDING_CONFIRMATION -> REJECTED (when user rejects publication)
-        READY -> PUBLISHED (when user confirms publication)
+        READY -> PUBLISHING (when publishing starts)
+        PUBLISHING -> PUBLISHED (when publishing completes successfully)
+        PUBLISHING -> READY (when publishing fails, can retry)
         Any -> FAILED (on error)
         FAILED -> PENDING_APPROVAL (retry)
     """
@@ -33,6 +35,7 @@ class TaskStatus(str, Enum):
     PENDING_CONFIRMATION = "pending_confirmation"  # Waiting for user to confirm content after generation
     REJECTED = "rejected"  # User rejected publication
     READY = "ready"  # User confirmed content, ready for publication
+    PUBLISHING = "publishing"  # Currently being published
     PUBLISHED = "published"  # User confirmed, post published (completed)
     FAILED = "failed"  # Error state
 
@@ -91,6 +94,13 @@ class Task(SQLModel, table=True):
         description="Post content as JSON"
     )
     
+    # Publish result (e.g. Instagram API responses)
+    result: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Publish result with logs array of full API responses"
+    )
+    
     # Timestamps
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
@@ -140,9 +150,9 @@ class Task(SQLModel, table=True):
     def mark_published(self) -> None:
         """Mark task as published (user action).
         
-        Moves task from READY to PUBLISHED.
+        Moves task from READY, PUBLISHING, or FAILED to PUBLISHED.
         """
-        if self.status != TaskStatus.READY:
+        if self.status not in (TaskStatus.READY, TaskStatus.PUBLISHING, TaskStatus.FAILED):
             raise ValueError(f"Cannot publish task in status {self.status.value}")
         self.status = TaskStatus.PUBLISHED
         self.updated_at = datetime.utcnow()
@@ -198,6 +208,17 @@ class Task(SQLModel, table=True):
         """
         if self.status != TaskStatus.READY:
             raise ValueError(f"Cannot request confirmation in status {self.status.value}")
+        self.status = TaskStatus.PENDING_CONFIRMATION
+        self.updated_at = datetime.utcnow()
+
+    def override_processing(self) -> None:
+        """Override processing and move task to PENDING_CONFIRMATION (user action).
+        
+        Allows a user to force-finish processing when in PROCESSING state,
+        e.g. when generation is stuck but the content is considered ready.
+        """
+        if self.status != TaskStatus.PROCESSING:
+            raise ValueError(f"Cannot override processing in status {self.status.value}")
         self.status = TaskStatus.PENDING_CONFIRMATION
         self.updated_at = datetime.utcnow()
 

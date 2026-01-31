@@ -42,6 +42,12 @@ class Job(SQLModel, table=True):
         foreign_key="tasks.id",
         description="Parent task ID"
     )
+
+    # Rendering order (lower numbers appear first)
+    order: int = Field(
+        default=0,
+        description="Controls display order of jobs (ascending)"
+    )
     
     # Status tracking
     status: JobStatus = Field(

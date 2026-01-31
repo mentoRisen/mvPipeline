@@ -9,7 +9,9 @@ import traceback
 
 from sqlmodel import Session, select
 from app.models.job import Job, JobStatus
+from app.models.task import Task, TaskStatus
 from app.db.engine import engine
+from app.services.ftpupload import uploadToPublic
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +74,28 @@ def process_job(job: Job) -> None:
                     task_id=str(job.task_id),
                     job_id=str(job.id)
                 )
+                # Upload generated image to public FTP (best-effort)
+                public_url = None
+                try:
+                    public_url = uploadToPublic(image_path)
+                    logger.info(
+                        "Uploaded DALL-E image for job %s to public FTP: %s",
+                        job.id,
+                        public_url,
+                    )
+                except Exception as ftp_err:
+                    logger.error(
+                        "Failed to upload DALL-E image for job %s to public FTP: %s",
+                        job.id,
+                        ftp_err,
+                    )
+
                 # Update job with success result
                 db_job.status = JobStatus.PROCESSED
                 db_job.result = {
                     "image_path": image_path,
                     "image_url": image_url,
+                    "public_url": public_url,
                     "generator": generator_type,
                 }
                 db_job.updated_at = datetime.utcnow()
@@ -97,10 +116,27 @@ def process_job(job: Job) -> None:
                     task_id=str(job.task_id),
                     job_id=str(job.id)
                 )
+                # Upload generated image to public FTP (best-effort)
+                public_url = None
+                try:
+                    public_url = uploadToPublic(image_path)
+                    logger.info(
+                        "Uploaded GPT-Image-1.5 image for job %s to public FTP: %s",
+                        job.id,
+                        public_url,
+                    )
+                except Exception as ftp_err:
+                    logger.error(
+                        "Failed to upload GPT-Image-1.5 image for job %s to public FTP: %s",
+                        job.id,
+                        ftp_err,
+                    )
+
                 # Update job with success result
                 db_job.status = JobStatus.PROCESSED
                 db_job.result = {
                     "image_path": image_path,
+                    "public_url": public_url,
                     "generator": generator_type,
                 }
                 db_job.updated_at = datetime.utcnow()
@@ -109,7 +145,23 @@ def process_job(job: Job) -> None:
                 logger.info(f"Successfully processed job {job.id} with GPT-Image-1.5. Image saved to {image_path}")
             else:
                 raise ValueError(f"Unknown generator type: {job.generator}")
-                
+            
+            # After successful job processing, if the parent task is in PROCESSING
+            # and all its jobs are PROCESSED, move the task to PENDING_CONFIRMATION.
+            task = session.get(Task, db_job.task_id)
+            if task and task.status == TaskStatus.PROCESSING:
+                jobs_stmt = select(Job).where(Job.task_id == db_job.task_id)
+                all_jobs = list(session.exec(jobs_stmt).all())
+                if all_jobs and all(j.status == JobStatus.PROCESSED for j in all_jobs):
+                    task.status = TaskStatus.PENDING_CONFIRMATION
+                    task.updated_at = datetime.utcnow()
+                    session.add(task)
+                    session.commit()
+                    logger.info(
+                        "All jobs for task %s processed; task moved to PENDING_CONFIRMATION",
+                        task.id,
+                    )
+
         except Exception as e:
             # Handle any errors with detailed traceback
             tb = traceback.format_exc()

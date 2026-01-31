@@ -5,6 +5,28 @@
       <div class="header-actions" v-if="task">
         <span :class="['badge', `badge-${task?.status}`]">{{ task?.status }}</span>
         <button
+          v-if="task.status === 'processing'"
+          @click="overrideProcessing"
+          class="btn-secondary"
+          type="button"
+        >
+          Override processing
+        </button>
+        <button
+          type="button"
+          class="btn-primary"
+          @click="updateTask"
+        >
+          Update Task
+        </button>
+        <button
+          v-if="task.status === 'ready' || task.status === 'publishing' || task.status === 'failed'"
+          @click="openPublishPreview"
+          class="btn-secondary"
+        >
+          Publish
+        </button>
+        <button
           v-if="task.status === 'draft'"
           @click="submitTask"
           class="btn-primary"
@@ -39,14 +61,21 @@
         >
           Reject
         </button>
-        <button
-          v-if="task.status === 'ready'"
-          @click="publishTask"
-          class="btn-success"
-        >
-          Publish
-        </button>
         <button @click="deleteTask" class="btn-danger">Delete</button>
+        <button
+          type="button"
+          class="btn-secondary"
+          @click="openJsonModal"
+        >
+          Json
+        </button>
+        <button
+          type="button"
+          class="btn-pink"
+          @click="loadTask"
+        >
+          Refresh
+        </button>
       </div>
     </div>
 
@@ -90,11 +119,13 @@
             <table class="jobs-table">
               <thead>
                 <tr>
+                  <th>Order</th>
                   <th>ID</th>
                   <th>Status</th>
                   <th>Generator</th>
                   <th>Purpose</th>
                   <th>Prompt</th>
+                  <th>Image</th>
                   <th>Created</th>
                   <th>Actions</th>
                 </tr>
@@ -102,6 +133,9 @@
               <tbody>
                 <template v-if="task.jobs && task.jobs.length">
                   <tr v-for="job in task.jobs" :key="job.id">
+                    <td class="mono">
+                      {{ job.order ?? 0 }}
+                    </td>
                     <td class="mono job-id-clickable" @click="copyJobId(job.id)" :title="`Click to copy full ID: ${job.id}`">
                       {{ job.id?.slice(0, 8) }}
                     </td>
@@ -132,6 +166,22 @@
                         </span>
                       </span>
                     </td>
+                    <td class="jobs-image">
+                      <button
+                        v-if="job.result && getJobImageUrl(job.result)"
+                        type="button"
+                        class="image-thumb-button"
+                        @click.stop="openJobImageModal(job)"
+                        :title="'Open image for job ' + job.id"
+                      >
+                        <img
+                          :src="getJobImageUrl(job.result)"
+                          alt="Job image thumbnail"
+                          class="jobs-image-thumb"
+                        />
+                      </button>
+                      <span v-else class="muted">—</span>
+                    </td>
                     <td>{{ formatDate(job.created_at) }}</td>
                     <td class="jobs-actions">
                       <button
@@ -152,6 +202,15 @@
                         {{ processingJobs[job.id] ? 'Processing…' : 'Process' }}
                       </button>
                       <button
+                        v-if="job.status === 'processing' || job.status === 'error' || job.status === 'processed'"
+                        type="button"
+                        class="btn-small btn-pink"
+                        :disabled="processingJobs[job.id]"
+                        @click="retryJob(job)"
+                      >
+                        {{ processingJobs[job.id] ? 'Retrying…' : 'Retry' }}
+                      </button>
+                      <button
                         type="button"
                         class="btn-small btn-secondary"
                         @click="editJob(job)"
@@ -169,16 +228,13 @@
                   </tr>
                 </template>
                 <tr v-else>
-                  <td class="jobs-empty" colspan="7">No jobs yet</td>
+                  <td class="jobs-empty" colspan="8">No jobs yet</td>
                 </tr>
               </tbody>
             </table>
           </div>
         </div>
 
-        <div class="form-actions">
-          <button type="submit" class="btn-primary">Update Task</button>
-        </div>
       </form>
 
       <div class="card" v-if="task.meta">
@@ -204,6 +260,15 @@
           <div class="form-group">
             <label>Status</label>
             <input type="text" :value="currentJobStatus || 'new'" disabled />
+          </div>
+          <div class="form-group">
+            <label>Order</label>
+            <input
+              v-model.number="newJob.order"
+              type="number"
+              min="0"
+              step="1"
+            />
           </div>
           <div class="form-group">
             <label>Generator</label>
@@ -239,7 +304,18 @@
                 v-if="currentJobResult && getJobImageUrl(currentJobResult)"
                 class="image-preview"
               >
-                <label>Generated Image</label>
+                <label>
+                  Generated Image
+                  <a
+                    v-if="getJobPublicImageUrl(currentJobResult)"
+                    :href="getJobPublicImageUrl(currentJobResult)"
+                    target="_blank"
+                    rel="noopener"
+                    class="image-link-inline"
+                  >
+                    public image
+                  </a>
+                </label>
                 <a
                   :href="getJobImageUrl(currentJobResult)"
                   target="_blank"
@@ -268,6 +344,132 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+    <!-- Publish Preview Modal -->
+    <div
+      v-if="showPublishModal"
+      class="modal-overlay"
+      @click="closePublishPreview"
+    >
+      <div class="modal-content publish-modal" @click.stop>
+        <h3>Publish Preview</h3>
+        <div class="form-group">
+          <label>Where to publish</label>
+          <select v-model="selectedPublishDestination">
+            <option value="instagram_post">Instagram post</option>
+          </select>
+        </div>
+
+        <div
+          v-if="selectedPublishDestination === 'instagram_post'"
+          class="instagram-preview-wrapper"
+        >
+          <h4>Instagram Post Preview</h4>
+          <div class="instagram-preview-card">
+            <div class="instagram-image-area" v-if="instagramImageJobs.length">
+              <div class="carousel-controls" v-if="instagramImageJobs.length > 1">
+                <button
+                  type="button"
+                  class="btn-small btn-secondary"
+                  @click.stop="prevCarouselImage"
+                >
+                  ‹
+                </button>
+                <span class="carousel-indicator">
+                  {{ currentCarouselIndex + 1 }} / {{ instagramImageJobs.length }}
+                </span>
+                <button
+                  type="button"
+                  class="btn-small btn-secondary"
+                  @click.stop="nextCarouselImage"
+                >
+                  ›
+                </button>
+              </div>
+              <div class="instagram-image-container">
+                <img
+                  :src="getJobImageUrl(instagramImageJobs[currentCarouselIndex].result)"
+                  alt="Instagram preview"
+                />
+              </div>
+            </div>
+            <div
+              v-else
+              class="instagram-image-area instagram-image-area-empty"
+            >
+              <span>No imagecontent jobs with images to show.</span>
+            </div>
+            <div class="instagram-caption-area">
+              <p v-if="captionPreview">{{ captionPreview }}</p>
+              <p v-else class="caption-placeholder">
+                Caption is empty. It will appear here.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions modal-actions">
+          <button
+            type="button"
+            class="btn-secondary"
+            @click="closePublishPreview"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn-success"
+            @click="confirmPublishPreview"
+          >
+            Publish
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Task JSON Modal -->
+    <div
+      v-if="showJsonModal"
+      class="modal-overlay"
+      @click="closeJsonModal"
+    >
+      <div class="modal-content json-modal" @click.stop>
+        <h3>Task JSON</h3>
+        <p class="json-modal-help">
+          This is a read-only JSON view of the current task object, including its jobs.
+          You can edit or copy it here, but changes are not saved back to the server.
+        </p>
+        <textarea
+          v-model="jsonEditorText"
+          class="json-textarea json-textarea-large"
+          spellcheck="false"
+        ></textarea>
+        <div class="form-actions modal-actions">
+          <button
+            type="button"
+            class="btn-secondary"
+            @click="closeJsonModal"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Job Image Preview Modal -->
+    <div
+      v-if="showJobImageModal"
+      class="modal-overlay"
+      @click="closeJobImageModal"
+    >
+      <div class="modal-content image-modal" @click.stop>
+        <img
+          v-if="jobImageModalUrl"
+          :src="jobImageModalUrl"
+          alt="Job image preview"
+          class="image-modal-img"
+        />
       </div>
     </div>
   </div>
@@ -301,6 +503,9 @@ export default {
         theme: '',
         caption: '',
       },
+      showPublishModal: false,
+      selectedPublishDestination: 'instagram_post',
+      currentCarouselIndex: 0,
       loading: false,
       error: null,
       success: null,
@@ -311,16 +516,42 @@ export default {
       currentJobStatus: null,
       currentJobResultText: '',
       newJob: {
+        order: 0,
         generator: 'dalle',
         purpose: 'imagecontent',
         promptText: '',
       },
       // Per-job processing state for showing a loading indicator on the Process button
       processingJobs: {},
+      // JSON modal state
+      showJsonModal: false,
+      jsonEditorText: '',
+      // Job image preview modal
+      showJobImageModal: false,
+      jobImageModalUrl: null,
     }
   },
   mounted() {
     this.loadTask()
+  },
+  computed: {
+    instagramImageJobs() {
+      if (!this.task || !this.task.jobs) return []
+      return this.task.jobs.filter((job) => {
+        return (
+          job.purpose === 'imagecontent' &&
+          job.result &&
+          this.getJobImageUrl(job.result)
+        )
+      })
+    },
+    captionPreview() {
+      if (this.editTask.caption) return this.editTask.caption
+      if (this.task && this.task.post && this.task.post.caption) {
+        return this.task.post.caption
+      }
+      return ''
+    },
   },
   watch: {
     // Watch for id changes to reload task data
@@ -387,6 +618,9 @@ export default {
       }
       try {
         await taskService.deleteTask(this.id)
+        // Emit event to parent to refresh list and clear selection
+        this.$emit('task-deleted', this.id)
+        // Navigate to home
         this.$router.push('/')
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to delete task')
@@ -440,6 +674,40 @@ export default {
         this.showError(err.response?.data?.detail || 'Failed to reject task')
       }
     },
+    async overrideProcessing() {
+      try {
+        this.task = await taskService.overrideProcessing(this.id)
+        this.showSuccess('Task moved to pending confirmation')
+      } catch (err) {
+        this.showError(
+          err.response?.data?.detail || 'Failed to override processing'
+        )
+      }
+    },
+    openPublishPreview() {
+      this.showPublishModal = true
+      this.currentCarouselIndex = 0
+    },
+    closePublishPreview() {
+      this.showPublishModal = false
+    },
+    confirmPublishPreview() {
+      // For now this only confirms and closes the modal without calling backend.
+      if (confirm('Are you sure you want to publish this post?')) {
+        this.showPublishModal = false
+      }
+    },
+    nextCarouselImage() {
+      if (!this.instagramImageJobs.length) return
+      this.currentCarouselIndex =
+        (this.currentCarouselIndex + 1) % this.instagramImageJobs.length
+    },
+    prevCarouselImage() {
+      if (!this.instagramImageJobs.length) return
+      this.currentCarouselIndex =
+        (this.currentCarouselIndex - 1 + this.instagramImageJobs.length) %
+        this.instagramImageJobs.length
+    },
     formatDate(dateString) {
       return new Date(dateString).toLocaleString()
     },
@@ -454,6 +722,27 @@ export default {
       const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
       const root = apiBase.replace(/\/api\/v1\/?$/, '')
       return root + rel
+    },
+    getJobPublicImageUrl(result) {
+      const rel = result?.image_path || result?.image_path_relative
+      if (!rel) return null
+
+      // Prefer explicit PUBLIC_URL from frontend env, fallback to API root
+      const publicUrl = import.meta.env.VITE_PUBLIC_URL
+
+      const base = String(publicUrl).replace(/\/+$/, '')
+      const path = String(rel).replace(/^\/+/, '')
+      return `${base}/${path}`
+    },
+    openJobImageModal(job) {
+      const url = job.result && this.getJobImageUrl(job.result)
+      if (!url) return
+      this.jobImageModalUrl = url
+      this.showJobImageModal = true
+    },
+    closeJobImageModal() {
+      this.showJobImageModal = false
+      this.jobImageModalUrl = null
     },
     truncatePrompt(text) {
       if (!text) return ''
@@ -506,6 +795,35 @@ export default {
         this.loadTask()
       }
     },
+    async retryJob(job) {
+      try {
+        // Mark this job as processing/retrying in the UI
+        this.$set
+          ? this.$set(this.processingJobs, job.id, true)
+          : (this.processingJobs = { ...this.processingJobs, [job.id]: true })
+
+        // First reset status back to 'ready'
+        await taskService.updateJob(this.id, job.id, { status: 'ready' })
+
+        // Then process the job again
+        await taskService.processJob(this.id, job.id)
+        this.showSuccess('Job retried')
+      } catch (err) {
+        this.showError(
+          err.response?.data?.detail || err.message || 'Failed to retry job'
+        )
+      } finally {
+        // Clear processing state for this job
+        if (this.$delete) {
+          this.$delete(this.processingJobs, job.id)
+        } else {
+          const { [job.id]: _, ...rest } = this.processingJobs
+          this.processingJobs = rest
+        }
+        // Reload task to reflect updated job status/result
+        this.loadTask()
+      }
+    },
     async deleteJob(job) {
       if (!confirm(`Are you sure you want to delete this job?`)) {
         return
@@ -526,6 +844,7 @@ export default {
       this.editingJobId = null
       this.showJobModal = true
       this.newJob = {
+        order: 0,
         generator: 'dalle',
         purpose: 'imagecontent',
         promptText: '',
@@ -541,6 +860,7 @@ export default {
         : ''
       this.showJobModal = true
       this.newJob = {
+        order: job.order ?? 0,
         generator: job.generator || 'dalle',
         purpose: job.purpose || 'imagecontent',
         promptText: job.prompt?.prompt || '',
@@ -553,6 +873,7 @@ export default {
       this.currentJobStatus = null
       this.currentJobResultText = ''
       this.newJob = {
+        order: 0,
         generator: 'dalle',
         purpose: 'imagecontent',
         promptText: '',
@@ -567,6 +888,10 @@ export default {
       try {
         // Build payload (status is set automatically on backend for new jobs)
         const payload = {
+          order:
+            this.newJob.order !== null && this.newJob.order !== undefined
+              ? Number(this.newJob.order)
+              : 0,
           generator: this.newJob.generator,
           purpose: this.newJob.purpose || null,
           prompt: this.newJob.promptText
@@ -596,6 +921,7 @@ export default {
 
         // Reset form
         this.newJob = {
+          order: 0,
           generator: 'dalle',
           purpose: 'imagecontent',
           promptText: '',
@@ -610,6 +936,16 @@ export default {
           err.response?.data?.detail || err.message || `Failed to ${this.editingJobId ? 'update' : 'create'} job`
         )
       }
+    },
+    openJsonModal() {
+      if (!this.task) return
+      // Deep-clone to avoid any accidental refs, then pretty-print
+      const cloned = JSON.parse(JSON.stringify(this.task))
+      this.jsonEditorText = this.formatJson(cloned)
+      this.showJsonModal = true
+    },
+    closeJsonModal() {
+      this.showJsonModal = false
     },
     showError(message) {
       this.error = message
@@ -692,6 +1028,13 @@ export default {
   margin-top: 0.5rem;
   color: #667eea;
   text-decoration: none;
+}
+
+.image-link-inline {
+  margin-left: 0.75rem;
+  font-size: 0.85rem;
+  color: #667eea;
+  text-decoration: underline;
 }
 
 .form-actions {
@@ -789,6 +1132,26 @@ export default {
   line-height: 1.4;
 }
 
+.jobs-image {
+  width: 60px;
+}
+
+.jobs-image-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  display: block;
+}
+
+.image-thumb-button {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
 .link-button {
   background: none;
   border: none;
@@ -840,7 +1203,7 @@ export default {
   padding: 2rem;
   border-radius: 8px;
   width: 90%;
-  max-width: 480px;
+  max-width: 520px;
   max-height: 90vh;
   overflow-y: auto;
 }
@@ -853,6 +1216,33 @@ export default {
   display: flex;
   justify-content: flex-end;
   gap: 1rem;
+}
+
+.json-modal {
+  max-width: 800px;
+}
+
+.json-textarea-large {
+  min-height: 50vh;
+  resize: vertical;
+  margin-top: 1rem;
+}
+
+.json-modal-help {
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin-bottom: 0.5rem;
+}
+
+.image-modal {
+  max-width: 800px;
+}
+
+.image-modal-img {
+  max-width: 100%;
+  max-height: 80vh;
+  display: block;
+  border-radius: 8px;
 }
 
 /* Top-of-screen toast messages */
@@ -897,5 +1287,81 @@ export default {
 .toast-fade-leave-to {
   opacity: 0;
   transform: translate(-50%, -10px);
+}
+
+.btn-pink {
+  background-color: #ec4899; /* pink-500 */
+  color: #ffffff;
+}
+
+.btn-pink:hover {
+  background-color: #db2777; /* pink-600 */
+}
+
+.publish-modal h4 {
+  margin-bottom: 0.75rem;
+}
+
+.instagram-preview-wrapper {
+  margin-top: 1rem;
+}
+
+.instagram-preview-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #f9fafb;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.instagram-image-area {
+  position: relative;
+  background: #111827;
+  min-height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.instagram-image-area-empty {
+  color: #9ca3af;
+  font-size: 0.875rem;
+}
+
+.instagram-image-container img {
+  max-width: 100%;
+  max-height: 400px;
+  object-fit: contain;
+  display: block;
+}
+
+.carousel-controls {
+  position: absolute;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.carousel-indicator {
+  font-size: 0.75rem;
+  color: #e5e7eb;
+}
+
+.instagram-caption-area {
+  padding: 0.75rem 1rem 1rem;
+  background: white;
+  font-size: 0.9rem;
+  color: #111827;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.caption-placeholder {
+  color: #9ca3af;
+  font-style: italic;
 }
 </style>

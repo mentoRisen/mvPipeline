@@ -2,6 +2,7 @@
   <div class="tasks-view">
     <section class="tasks-view-left">
       <TaskList
+        ref="taskList"
         :selected-task-id="selectedTaskId"
         @select-task="handleSelectTask"
       />
@@ -11,6 +12,7 @@
         v-if="selectedTaskId"
         :id="selectedTaskId"
         :key="selectedTaskId"
+        @task-deleted="handleTaskDeleted"
       />
       <div v-else class="placeholder card">
         <h3>Select a task</h3>
@@ -39,6 +41,13 @@ export default {
     handleSelectTask(id) {
       // Ensure ID is a string and update selected task
       this.selectedTaskId = String(id)
+    },
+    handleTaskDeleted(taskId) {
+      // Clear selection and refresh task list
+      this.selectedTaskId = null
+      if (this.$refs.taskList) {
+        this.$refs.taskList.loadTasks()
+      }
     },
   },
 }

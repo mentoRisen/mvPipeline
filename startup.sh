@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Startup script to launch API and Frontend servers
+# Startup script to launch API, Frontend, and optionally the background worker
 # Linux and Bash only
-# Usage: ./startup.sh [--api|-api] [--gui|-gui] [--foreground|-f]
+# Usage: ./startup.sh [--api|-api] [--gui|-gui] [--worker|-worker] [--foreground|-f]
 
 set -euo pipefail
 
@@ -19,6 +19,7 @@ readonly NC='\033[0m'
 # Parse command line arguments
 START_API=true
 START_GUI=true
+START_WORKER=false
 FOREGROUND=false
 
 for arg in "$@"; do
@@ -31,16 +32,25 @@ for arg in "$@"; do
             START_GUI=true
             START_API=false
             ;;
+        --worker|-worker)
+            START_WORKER=true
+            ;;
         --foreground|-f)
             FOREGROUND=true
             ;;
         *)
             echo -e "${RED}Unknown option: $arg${NC}"
-            echo "Usage: ./startup.sh [--api|-api] [--gui|-gui] [--foreground|-f]"
+            echo "Usage: ./startup.sh [--api|-api] [--gui|-gui] [--worker|-worker] [--foreground|-f]"
             exit 1
             ;;
     esac
 done
+
+# -f --worker: run only worker in foreground (no API, no GUI)
+if [ "$FOREGROUND" = true ] && [ "$START_WORKER" = true ]; then
+    START_API=false
+    START_GUI=false
+fi
 
 echo -e "${BLUE}Starting Quote-Image Pipeline MVP...${NC}"
 
@@ -55,8 +65,13 @@ cleanup() {
         kill "$(cat logs/frontend.pid)" 2>/dev/null || true
         rm -f logs/frontend.pid
     fi
+    if [ -f logs/worker.pid ]; then
+        kill "$(cat logs/worker.pid)" 2>/dev/null || true
+        rm -f logs/worker.pid
+    fi
     # Kill any remaining Python/Node processes
     pkill -f "python -m app.main" 2>/dev/null || true
+    pkill -f "python -m app.worker" 2>/dev/null || true
     pkill -f "npm run dev" 2>/dev/null || true
     echo -e "${GREEN}Servers stopped.${NC}"
     exit 0
@@ -68,12 +83,21 @@ trap cleanup SIGINT SIGTERM EXIT
 # Create logs directory if it doesn't exist
 mkdir -p logs
 
-# Check if both servers are requested in foreground mode
-if [ "$FOREGROUND" = true ] && [ "$START_API" = true ] && [ "$START_GUI" = true ]; then
-    echo -e "${RED}Error: Cannot run both servers in foreground simultaneously.${NC}"
-    echo -e "${YELLOW}Use: ./startup.sh -f --api  or  ./startup.sh -f --gui${NC}"
-    echo -e "${YELLOW}Or run in background mode: ./startup.sh${NC}"
-    exit 1
+# With -f, exactly one of API, GUI, or worker may run
+if [ "$FOREGROUND" = true ]; then
+    n=0
+    [ "$START_API" = true ]  && n=$((n + 1))
+    [ "$START_GUI" = true ]  && n=$((n + 1))
+    [ "$START_WORKER" = true ] && n=$((n + 1))
+    if [ "$n" -gt 1 ]; then
+        echo -e "${RED}Error: Use -f with exactly one of --api, --gui, --worker.${NC}"
+        echo -e "${YELLOW}Examples: ./startup.sh -f --api  or  ./startup.sh -f --gui  or  ./startup.sh -f --worker${NC}"
+        exit 1
+    fi
+    if [ "$n" -eq 0 ]; then
+        echo -e "${RED}Error: Use -f with one of --api, --gui, --worker.${NC}"
+        exit 1
+    fi
 fi
 
 # Start API server
@@ -102,6 +126,32 @@ if [ "$START_API" = true ]; then
         echo -e "${GREEN}API server started (PID: $API_PID, logs: logs/api.log)${NC}"
         echo -e "${BLUE}API: http://localhost:8000${NC}"
         echo -e "${BLUE}API Docs: http://localhost:8000/docs${NC}"
+    fi
+fi
+
+# Start worker (READY jobs in PROCESSING tasks)
+if [ "$START_WORKER" = true ]; then
+    if [ "$FOREGROUND" = true ]; then
+        echo -e "${GREEN}Starting worker in foreground...${NC}"
+        cd "$SCRIPT_DIR"
+        if [ -d "venv" ]; then
+            source venv/bin/activate
+        fi
+        echo -e "${BLUE}Worker processes READY jobs in PROCESSING tasks.${NC}"
+        echo ""
+        echo -e "${YELLOW}Press Ctrl+C to stop${NC}"
+        python -m app.worker
+    else
+        (
+            cd "$SCRIPT_DIR"
+            if [ -d "venv" ]; then
+                source venv/bin/activate
+            fi
+            python -m app.worker > logs/worker.log 2>&1
+        ) &
+        WORKER_PID=$!
+        echo $WORKER_PID > logs/worker.pid
+        echo -e "${GREEN}Worker started (PID: $WORKER_PID, logs: logs/worker.log)${NC}"
     fi
 fi
 
@@ -137,7 +187,8 @@ fi
 if [ "$FOREGROUND" = false ]; then
     echo ""
     echo -e "${BLUE}Servers are running in the background.${NC}"
+    [ "$START_WORKER" = true ] && echo -e "${BLUE}Worker processes READY jobs in PROCESSING tasks.${NC}"
     echo -e "${YELLOW}Press Ctrl+C to stop all servers${NC}"
-    echo -e "${YELLOW}Or run in foreground mode: ./startup.sh -f --api  or  ./startup.sh -f --gui${NC}"
+    echo -e "${YELLOW}Or run in foreground: ./startup.sh -f --api  or  -f --gui  or  -f --worker${NC}"
     wait
 fi

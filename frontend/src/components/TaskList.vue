@@ -16,6 +16,8 @@
           <option value="failed">Failed</option>
         </select>
         <button @click="showCreateModal = true" class="btn-primary">Create Task</button>
+        <button @click="openCreateFromJsonModal" class="btn-secondary">From JSON</button>
+        <button @click="loadTasks" class="btn-pink">Refresh</button>
       </div>
     </div>
 
@@ -38,7 +40,13 @@
           @click="selectTask(task.id)"
         >
           <div class="col-id">
-            <span class="mono">{{ task.id.slice(0, 8) }}</span>
+            <span 
+              class="mono task-id-clickable" 
+              @click.stop="copyTaskId(task.id)" 
+              :title="`Click to copy full ID: ${task.id}`"
+            >
+              {{ task.id.slice(0, 8) }}
+            </span>
           </div>
           <div class="col-status">
             <span :class="['badge', `badge-${task.status}`]">{{ task.status }}</span>
@@ -51,48 +59,7 @@
             <small>{{ formatDate(task.created_at) }}</small>
           </div>
           <div class="col-actions" @click.stop>
-            <button
-              v-if="task.status === 'draft'"
-              @click="submitTask(task.id)"
-              class="btn-primary btn-small"
-            >
-              Submit
-            </button>
-            <button
-              v-if="task.status === 'pending_approval'"
-              @click="approveProcessing(task.id)"
-              class="btn-success btn-small"
-            >
-              Approve
-            </button>
-            <button
-              v-if="task.status === 'pending_approval'"
-              @click="disapproveTask(task.id)"
-              class="btn-danger btn-small"
-            >
-              Disapprove
-            </button>
-            <button
-              v-if="task.status === 'pending_confirmation'"
-              @click="approvePublication(task.id)"
-              class="btn-success btn-small"
-            >
-              Approve Pub.
-            </button>
-            <button
-              v-if="task.status === 'pending_confirmation'"
-              @click="rejectTask(task.id)"
-              class="btn-danger btn-small"
-            >
-              Reject
-            </button>
-            <button
-              v-if="task.status === 'ready'"
-              @click="publishTask(task.id)"
-              class="btn-success btn-small"
-            >
-              Publish
-            </button>
+            <!-- Actions for list view are currently managed in TaskDetail; none here -->
           </div>
         </div>
         <div v-if="!loading && tasks.length === 0" class="empty-state">
@@ -127,18 +94,71 @@
       </div>
     </div>
 
+    <!-- Create from JSON Modal -->
+    <div
+      v-if="showCreateFromJsonModal"
+      class="modal-overlay"
+      @click="closeCreateFromJsonModal"
+    >
+      <div class="modal-content json-create-modal" @click.stop>
+        <h3>Create Task from JSON</h3>
+        <div class="form-group">
+          <label>Template <span class="required">*</span></label>
+          <select v-model="jsonTemplateName" @change="loadJsonTemplate" required>
+            <option value="">Select template</option>
+            <option value="instagram_post">Instagram Post</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>JSON Template</label>
+          <textarea
+            v-model="jsonTemplateText"
+            class="json-textarea json-textarea-large"
+            spellcheck="false"
+            placeholder="Select a template to load JSON structure..."
+          ></textarea>
+        </div>
+        <div class="form-actions">
+          <button
+            type="button"
+            @click="closeCreateFromJsonModal"
+            class="btn-secondary"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            @click="createTaskFromJson"
+            class="btn-primary"
+            :disabled="!jsonTemplateText || !jsonTemplateName"
+          >
+            Create from JSON
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Error/Success Modal -->
-    <div v-if="error || success" class="modal-overlay" @click="dismissMessage">
+    <div v-if="error" class="modal-overlay" @click="dismissMessage">
       <div class="modal-content message-modal" @click.stop>
-        <div :class="['message-content', error ? 'message-error' : 'message-success']">
-          <h3>{{ error ? 'Error' : 'Success' }}</h3>
-          <p>{{ error || success }}</p>
+        <div class="message-content message-error">
+          <h3>Error</h3>
+          <p>{{ error }}</p>
           <div class="message-actions">
             <button @click="dismissMessage" class="btn-primary">Close</button>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Compact top-of-screen toast for success messages -->
+    <transition name="toast-fade">
+      <div v-if="success" class="toast-container">
+        <div class="toast toast-success">
+          {{ success }}
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -166,6 +186,9 @@ export default {
         template: '',
       },
       messageTimeout: null,
+      showCreateFromJsonModal: false,
+      jsonTemplateName: '',
+      jsonTemplateText: '',
     }
   },
   mounted() {
@@ -285,11 +308,11 @@ export default {
       }
       this.success = message
       this.error = null
-      // Auto-dismiss after 10 seconds (longer visibility)
+      // Auto-dismiss after 3 seconds (toast-style, shorter for quick feedback)
       this.messageTimeout = setTimeout(() => {
         this.success = null
         this.messageTimeout = null
-      }, 10000)
+      }, 3000)
     },
     dismissMessage() {
       // Clear timeout if message is manually dismissed
@@ -299,6 +322,195 @@ export default {
       }
       this.error = null
       this.success = null
+    },
+    async copyTaskId(taskId) {
+      try {
+        await navigator.clipboard.writeText(taskId)
+        this.showSuccess('Task ID copied to clipboard')
+      } catch (err) {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea')
+        textArea.value = taskId
+        textArea.style.position = 'fixed'
+        textArea.style.opacity = '0'
+        document.body.appendChild(textArea)
+        textArea.select()
+        try {
+          document.execCommand('copy')
+          this.showSuccess('Task ID copied to clipboard')
+        } catch (fallbackErr) {
+          this.showError('Failed to copy task ID')
+        }
+        document.body.removeChild(textArea)
+      }
+    },
+    async openCreateFromJsonModal() {
+      this.showCreateFromJsonModal = true
+      this.jsonTemplateName = 'instagram_post'
+      // Load template automatically
+      await this.$nextTick()
+      await this.loadJsonTemplate()
+    },
+    closeCreateFromJsonModal() {
+      this.showCreateFromJsonModal = false
+      this.jsonTemplateName = ''
+      this.jsonTemplateText = ''
+    },
+    async loadJsonTemplate() {
+      if (!this.jsonTemplateName) {
+        this.jsonTemplateText = ''
+        return
+      }
+      try {
+        const template = await taskService.getTemplate(this.jsonTemplateName)
+        this.jsonTemplateText = JSON.stringify(template, null, 2)
+      } catch (err) {
+        this.showError(err.response?.data?.detail || 'Failed to load template')
+      }
+    },
+    async createTaskFromJson() {
+      if (!this.jsonTemplateText || !this.jsonTemplateName) {
+        this.showError('Please select a template and provide JSON')
+        return
+      }
+
+      try {
+        // Parse JSON
+        const taskData = JSON.parse(this.jsonTemplateText)
+
+        // Validate required fields
+        if (!taskData.name || !taskData.template) {
+          this.showError('JSON must include "name" and "template" fields')
+          return
+        }
+
+        // Validate name is not empty or just whitespace
+        if (!taskData.name.trim()) {
+          this.showError('Task name cannot be empty')
+          return
+        }
+
+        // Extract jobs if present
+        const jobs = taskData.jobs || []
+        delete taskData.jobs
+
+        // Map top-level theme/caption into meta/post so they appear correctly in the UI
+        // and are persisted in a consistent way.
+        const topLevelTheme = taskData.theme
+        const topLevelCaption = taskData.caption
+        delete taskData.theme
+        delete taskData.caption
+
+        if (topLevelTheme !== undefined && topLevelTheme !== null && topLevelTheme !== '') {
+          taskData.meta = taskData.meta || {}
+          if (taskData.meta.theme === undefined) {
+            taskData.meta.theme = topLevelTheme
+          }
+        }
+
+        if (topLevelCaption !== undefined && topLevelCaption !== null && topLevelCaption !== '') {
+          // Store caption under post.caption so TaskDetail sees it
+          taskData.post = taskData.post || {}
+          if (taskData.post.caption === undefined) {
+            taskData.post.caption = topLevelCaption
+          }
+          // Also set caption_text for backend legacy support, if not already set
+          if (taskData.caption_text === undefined) {
+            taskData.caption_text = topLevelCaption
+          }
+        }
+
+        // Clean up meta and post - remove null values or convert empty explanatory strings to null.
+        // Skip theme/caption here so user-provided values from JSON are preserved.
+        if (taskData.meta) {
+          for (const key in taskData.meta) {
+            if (key === 'theme') continue
+            if (taskData.meta[key] === null || taskData.meta[key] === '') {
+              taskData.meta[key] = null
+            } else if (typeof taskData.meta[key] === 'string' && taskData.meta[key].startsWith('Enter ')) {
+              // If it's still the explanatory text, set to null
+              taskData.meta[key] = null
+            }
+          }
+        }
+
+        if (taskData.post) {
+          for (const key in taskData.post) {
+            if (key === 'caption') continue
+            if (taskData.post[key] === null || taskData.post[key] === '') {
+              taskData.post[key] = null
+            } else if (typeof taskData.post[key] === 'string' && taskData.post[key].startsWith('Enter ')) {
+              // If it's still the explanatory text, set to null
+              taskData.post[key] = null
+            }
+          }
+        }
+
+        // Clean up job prompts - preserve prompt value, only set to null if explicitly empty
+        if (jobs && jobs.length > 0) {
+          for (const job of jobs) {
+            console.log(`[createTaskFromJson] Before cleanup - job prompt:`, JSON.stringify(job.prompt))
+            
+            if (job.prompt && typeof job.prompt === 'object' && job.prompt.prompt !== undefined) {
+              // Only set to null if prompt.prompt is explicitly empty (empty string or only whitespace)
+              // DO NOT remove explanatory text - preserve whatever the user has
+              const promptValue = job.prompt.prompt
+              if (promptValue === '' || (typeof promptValue === 'string' && promptValue.trim() === '')) {
+                console.log(`[createTaskFromJson] Prompt is empty, setting to null`)
+                job.prompt = null
+              } else {
+                console.log(`[createTaskFromJson] Keeping prompt value:`, promptValue.substring(0, 50) + '...')
+              }
+            } else if (!job.prompt) {
+              // If prompt is missing entirely,
+              //  set to null
+              job.prompt = null
+            }
+            
+            console.log(`[createTaskFromJson] After cleanup - job prompt:`, JSON.stringify(job.prompt))
+          }
+        }
+
+        // Create task
+        console.log('[createTaskFromJson] Creating task with data:', JSON.stringify(taskData, null, 2))
+        const createdTask = await taskService.createTask(taskData)
+        console.log('[createTaskFromJson] Task created successfully:', createdTask.id)
+
+        // Create jobs if provided
+        console.log('[createTaskFromJson] Jobs to create:', jobs.length)
+        if (jobs.length > 0) {
+          for (let i = 0; i < jobs.length; i++) {
+            const jobData = jobs[i]
+            console.log(`[createTaskFromJson] Processing job ${i + 1}/${jobs.length}:`, JSON.stringify(jobData, null, 2))
+            
+            // Only create job if it has required fields (generator is required, prompt is optional)
+            if (jobData.generator) {
+              console.log(`[createTaskFromJson] Creating job ${i + 1} for task ${createdTask.id} with generator: ${jobData.generator}`)
+              try {
+                const createdJob = await taskService.createJob(createdTask.id, jobData)
+                console.log(`[createTaskFromJson] Job ${i + 1} created successfully:`, createdJob.id)
+              } catch (jobError) {
+                console.error(`[createTaskFromJson] Failed to create job ${i + 1}:`, jobError)
+                throw jobError
+              }
+            } else {
+              console.warn(`[createTaskFromJson] Skipping job ${i + 1} - missing generator field`)
+            }
+          }
+        } else {
+          console.log('[createTaskFromJson] No jobs to create')
+        }
+
+        this.showSuccess('Task created successfully from JSON')
+        this.closeCreateFromJsonModal()
+        this.loadTasks()
+      } catch (err) {
+        if (err instanceof SyntaxError) {
+          this.showError('Invalid JSON format: ' + err.message)
+        } else {
+          this.showError(err.response?.data?.detail || err.message || 'Failed to create task from JSON')
+        }
+      }
     },
   },
 }
@@ -365,6 +577,18 @@ export default {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
   font-size: 0.8rem;
+}
+
+.task-id-clickable {
+  cursor: pointer;
+  color: #667eea;
+  text-decoration: underline;
+  user-select: none;
+}
+
+.task-id-clickable:hover {
+  color: #5568d3;
+  background-color: #f3f4f6;
 }
 
 .quote-preview {
@@ -474,5 +698,74 @@ export default {
   display: flex;
   justify-content: flex-end;
   margin-top: 1.5rem;
+}
+
+/* Top-of-screen toast messages */
+.toast-container {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  pointer-events: none;
+}
+
+.toast {
+  min-width: 260px;
+  max-width: 420px;
+  background: #111827;
+  color: #f9fafb;
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  box-shadow: 0 10px 15px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.toast-success {
+  background: #064e3b;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -10px);
+}
+
+.btn-pink {
+  background-color: #ec4899; /* pink-500 */
+  color: #ffffff;
+}
+
+.btn-pink:hover {
+  background-color: #db2777; /* pink-600 */
+}
+
+.json-create-modal {
+  max-width: 800px;
+}
+
+.json-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 0.85rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.75rem;
+}
+
+.json-textarea-large {
+  min-height: 50vh;
+  resize: vertical;
 }
 </style>

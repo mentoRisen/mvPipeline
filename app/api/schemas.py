@@ -18,6 +18,8 @@ class TaskCreate(BaseModel):
     caption_text: Optional[str] = None
     image_generator: Optional[str] = None
     meta: Optional[dict] = None
+    # Optional initial post content (e.g., {"caption": "..."}), used when creating tasks from JSON.
+    post: Optional[dict] = None
 
 
 class TaskUpdate(BaseModel):
@@ -33,6 +35,7 @@ class JobResponse(BaseModel):
     id: UUID
     task_id: UUID
     status: JobStatus
+    order: int
     generator: str
     purpose: Optional[str] = None
     prompt: Optional[dict] = None
@@ -49,6 +52,7 @@ class JobCreate(BaseModel):
     generator: str = Field(..., description="Generator to use (e.g., 'dalle', 'gptimage15')")
     purpose: Optional[str] = Field(None, description="Purpose/reason for how the job result should be used")
     prompt: Optional[dict] = Field(None, description="JSON with all data needed to run the prompt")
+    order: Optional[int] = Field(0, description="Rendering order for this job (ascending)")
 
 
 class JobUpdate(BaseModel):
@@ -58,6 +62,7 @@ class JobUpdate(BaseModel):
     prompt: Optional[dict] = Field(None, description="JSON with all data needed to run the prompt")
     status: Optional[JobStatus] = Field(None, description="Job status")
     result: Optional[dict] = Field(None, description="JSON with the job result (e.g., image paths, errors)")
+    order: Optional[int] = Field(None, description="Rendering order for this job (ascending)")
 
 
 class TaskResponse(BaseModel):
@@ -75,6 +80,7 @@ class TaskResponse(BaseModel):
     last_error: Optional[str] = None
     meta: Optional[dict] = None
     post: Optional[dict] = None
+    result: Optional[dict] = None
     jobs: Optional[list[JobResponse]] = None
     created_at: datetime
     updated_at: datetime

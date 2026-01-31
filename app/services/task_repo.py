@@ -264,3 +264,24 @@ def submit_task_for_approval(task_id: UUID) -> Task:
     task.submit_for_approval()
     return save(task)
 
+
+def override_task_processing(task_id: UUID) -> Task:
+    """Override processing and move task to PENDING_CONFIRMATION (user action).
+    
+    Moves task from PROCESSING to PENDING_CONFIRMATION regardless of generator state.
+    
+    Args:
+        task_id: The UUID of the task to override
+        
+    Returns:
+        The updated task
+        
+    Raises:
+        ValueError: If task not found or not in PROCESSING status
+    """
+    task = get_task_by_id(task_id)
+    if not task:
+        raise ValueError(f"Task {task_id} not found")
+    task.override_processing()
+    return save(task)
+

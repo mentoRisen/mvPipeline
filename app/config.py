@@ -110,3 +110,12 @@ Required for publishing posts to Instagram.
 Get from: https://developers.facebook.com/docs/instagram-api/getting-started
 Set via INSTAGRAM_ACCOUNT_ID environment variable or .env file.
 """
+
+# Background worker configuration
+WORKER_CHECK_INTERVAL_SECONDS = int(os.getenv("WORKER_CHECK_INTERVAL_SECONDS", "30"))
+"""Interval in seconds between checks for processable jobs.
+
+The worker processes READY jobs whose parent task is PROCESSING.
+Set via WORKER_CHECK_INTERVAL_SECONDS environment variable or .env file.
+Defaults to 30.
+"""
