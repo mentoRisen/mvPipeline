@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from app.models.task import Task, TaskStatus
+from app.models.job import Job, JobStatus
 from app.db.engine import engine
 
 
@@ -143,6 +144,7 @@ def approve_task_for_processing(task_id: UUID) -> Task:
     """Approve a task for processing (user action).
     
     Moves task from PENDING_APPROVAL to PROCESSING.
+    Also sets all jobs with status NEW to READY (same as clicking "Ready" on each).
     
     Args:
         task_id: The UUID of the task to approve
@@ -157,7 +159,23 @@ def approve_task_for_processing(task_id: UUID) -> Task:
     if not task:
         raise ValueError(f"Task {task_id} not found")
     task.approve_for_processing()
-    return save(task)
+    with Session(engine) as session:
+        session.add(task)
+        # Set all NEW jobs to READY (same as "Ready" action on each job)
+        jobs = list(
+            session.exec(
+                select(Job).where(
+                    Job.task_id == task_id,
+                    Job.status == JobStatus.NEW,
+                )
+            ).all()
+        )
+        for job in jobs:
+            job.status = JobStatus.READY
+            session.add(job)
+        session.commit()
+        session.refresh(task)
+    return task
 
 
 def disapprove_task(task_id: UUID) -> Task:

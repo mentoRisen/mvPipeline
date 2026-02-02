@@ -1,11 +1,22 @@
 """Instagram publishing service using Instagram Graph API."""
 
+import logging
 import os
+import time
 import requests
 from pathlib import Path
 from typing import Optional
 
 from app.config import PROJECT_ROOT
+
+logger = logging.getLogger(__name__)
+
+# Delay (seconds) to wait after creating a container before publishing (Instagram needs time to process media)
+PUBLISH_INITIAL_DELAY = 5
+# Retry when Instagram returns "Media ID is not available" (code 9007)
+PUBLISH_MAX_RETRIES = 3
+PUBLISH_RETRY_DELAY = 5
+INSTAGRAM_ERROR_MEDIA_NOT_AVAILABLE = 9007
 
 
 class InstagramPublisher:
@@ -72,8 +83,8 @@ class InstagramPublisher:
         
         # Step 1: Create media container
         container_id = self._create_media_container(image_url, caption or "")
-        
-        # Step 2: Publish the container
+        time.sleep(PUBLISH_INITIAL_DELAY)
+        # Step 2: Publish the container (with retry if media not ready yet)
         media_id = self._publish_media_container(container_id)
         
         # Step 3: Get media details (including permalink)
@@ -122,6 +133,9 @@ class InstagramPublisher:
     def _publish_media_container(self, container_id: str) -> str:
         """Publish a media container to Instagram.
         
+        Waits PUBLISH_INITIAL_DELAY before first attempt (caller may do this).
+        Retries up to PUBLISH_MAX_RETRIES when Instagram returns 9007 (Media ID not available).
+        
         Args:
             container_id: Container ID from create_media_container
             
@@ -129,23 +143,36 @@ class InstagramPublisher:
             Media ID of published post
             
         Raises:
-            requests.RequestException: If API request fails
+            requests.RequestException: If API request fails after retries
         """
         url = f"{self.base_url}/{self.instagram_account_id}/media_publish"
-        
         params = {
             "access_token": self.access_token,
             "creation_id": container_id,
         }
-        
-        response = requests.post(url, params=params)
-        response.raise_for_status()
-        
-        result = response.json()
-        if "id" not in result:
-            raise ValueError(f"Failed to publish media: {result}")
-        
-        return result["id"]
+        for attempt in range(PUBLISH_MAX_RETRIES):
+            response = requests.post(url, params=params)
+            if response.ok:
+                result = response.json()
+                if "id" not in result:
+                    raise ValueError(f"Failed to publish media: {result}")
+                return result["id"]
+            try:
+                err_body = response.json()
+                code = err_body.get("error", {}).get("code")
+                if code == INSTAGRAM_ERROR_MEDIA_NOT_AVAILABLE and attempt < PUBLISH_MAX_RETRIES - 1:
+                    logger.warning(
+                        "Instagram media not ready yet (9007), retrying in %ds (attempt %d/%d)",
+                        PUBLISH_RETRY_DELAY,
+                        attempt + 1,
+                        PUBLISH_MAX_RETRIES,
+                    )
+                    time.sleep(PUBLISH_RETRY_DELAY)
+                    continue
+            except (ValueError, TypeError):
+                pass
+            response.raise_for_status()
+        response.raise_for_status()  # raise last response after exhausting retries
     
     def _get_media_info(self, media_id: str) -> dict:
         """Get media information including permalink.

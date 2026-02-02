@@ -7,6 +7,7 @@ all imagecontent jobs from the task.
 
 import logging
 import os
+import time
 from typing import Optional
 
 import requests
@@ -14,7 +15,10 @@ from sqlmodel import Session, select
 
 from app.models.task import Task
 from app.models.job import Job
-from app.services.instagram_publisher import InstagramPublisher
+from app.services.instagram_publisher import (
+    InstagramPublisher,
+    PUBLISH_INITIAL_DELAY,
+)
 from app.db.engine import engine
 
 logger = logging.getLogger(__name__)
@@ -179,8 +183,12 @@ def _publish_carousel(
             logger.error(f"Response status: {e.response.status_code}")
             logger.error(f"Response body: {e.response.text}")
         raise
-    
-    # Step 3: Publish the carousel container
+
+    # Wait for Instagram to have the container ready before publishing
+    logger.info(f"Waiting {PUBLISH_INITIAL_DELAY}s for media to be ready...")
+    time.sleep(PUBLISH_INITIAL_DELAY)
+
+    # Step 3: Publish the carousel container (with retry on "Media ID not available")
     logger.info(f"Publishing carousel container {carousel_container_id}...")
     try:
         media_id = publisher._publish_media_container(carousel_container_id)

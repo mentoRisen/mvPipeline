@@ -20,11 +20,11 @@
           Update Task
         </button>
         <button
-          v-if="task.status === 'ready' || task.status === 'publishing' || task.status === 'failed'"
+          v-if="task.status === 'pending_confirmation' || task.status === 'ready' || task.status === 'publishing' || task.status === 'failed'"
           @click="openPublishPreview"
           class="btn-secondary"
         >
-          Publish
+          Preview
         </button>
         <button
           v-if="task.status === 'draft'"
@@ -346,14 +346,14 @@
         </form>
       </div>
     </div>
-    <!-- Publish Preview Modal -->
+    <!-- Preview Modal -->
     <div
       v-if="showPublishModal"
       class="modal-overlay"
       @click="closePublishPreview"
     >
       <div class="modal-content publish-modal" @click.stop>
-        <h3>Publish Preview</h3>
+        <h3>Preview</h3>
         <div class="form-group">
           <label>Where to publish</label>
           <select v-model="selectedPublishDestination">
@@ -365,7 +365,35 @@
           v-if="selectedPublishDestination === 'instagram_post'"
           class="instagram-preview-wrapper"
         >
-          <h4>Instagram Post Preview</h4>
+          <div class="instagram-preview-header">
+            <h4>Instagram Post Preview</h4>
+            <div
+              v-if="instagramImageJobs.length > 1"
+              class="preview-order-buttons"
+            >
+              <span class="preview-order-label">
+                {{ currentCarouselIndex + 1 }} / {{ instagramImageJobs.length }}
+              </span>
+              <button
+                type="button"
+                class="btn-small btn-secondary"
+                :disabled="currentCarouselIndex === 0 || reorderingJobs"
+                :title="'Move current image up (earlier in post)'"
+                @click.stop="moveJobOrderUp"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                class="btn-small btn-secondary"
+                :disabled="currentCarouselIndex === instagramImageJobs.length - 1 || reorderingJobs"
+                :title="'Move current image down (later in post)'"
+                @click.stop="moveJobOrderDown"
+              >
+                ↓
+              </button>
+            </div>
+          </div>
           <div class="instagram-preview-card">
             <div class="instagram-image-area" v-if="instagramImageJobs.length">
               <div class="carousel-controls" v-if="instagramImageJobs.length > 1">
@@ -417,13 +445,31 @@
           >
             Cancel
           </button>
-          <button
-            type="button"
-            class="btn-success"
-            @click="confirmPublishPreview"
-          >
-            Publish
-          </button>
+          <template v-if="task.status === 'pending_confirmation'">
+            <button
+              type="button"
+              class="btn-danger"
+              @click="rejectTaskFromPreview"
+            >
+              Reject
+            </button>
+            <button
+              type="button"
+              class="btn-success"
+              @click="approvePublicationFromPreview"
+            >
+              Approve for Publication
+            </button>
+          </template>
+          <template v-else-if="task.status === 'ready' || task.status === 'publishing' || task.status === 'failed'">
+            <button
+              type="button"
+              class="btn-success"
+              @click="confirmPublishPreview"
+            >
+              Publish
+            </button>
+          </template>
         </div>
       </div>
     </div>
@@ -529,6 +575,8 @@ export default {
       // Job image preview modal
       showJobImageModal: false,
       jobImageModalUrl: null,
+      // Reordering jobs in preview (disable buttons while saving)
+      reorderingJobs: false,
     }
   },
   mounted() {
@@ -537,12 +585,21 @@ export default {
   computed: {
     instagramImageJobs() {
       if (!this.task || !this.task.jobs) return []
-      return this.task.jobs.filter((job) => {
+      const filtered = this.task.jobs.filter((job) => {
         return (
           job.purpose === 'imagecontent' &&
           job.result &&
           this.getJobImageUrl(job.result)
         )
+      })
+      // Sort by order desc (highest first), then created_at, so display order matches backend
+      return [...filtered].sort((a, b) => {
+        const orderA = a.order ?? 0
+        const orderB = b.order ?? 0
+        if (orderB !== orderA) return orderB - orderA
+        const createdA = a.created_at ? new Date(a.created_at).getTime() : 0
+        const createdB = b.created_at ? new Date(b.created_at).getTime() : 0
+        return createdA - createdB
       })
     },
     captionPreview() {
@@ -628,56 +685,63 @@ export default {
     },
     async submitTask() {
       try {
-        this.task = await taskService.submitTask(this.id)
+        await taskService.submitTask(this.id)
         this.showSuccess('Task submitted for approval')
+        await this.loadTask()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to submit task')
       }
     },
     async approveProcessing() {
       try {
-        this.task = await taskService.approveProcessing(this.id)
+        await taskService.approveProcessing(this.id)
         this.showSuccess('Task approved for processing')
+        await this.loadTask()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to approve task')
       }
     },
     async disapproveTask() {
       try {
-        this.task = await taskService.disapproveTask(this.id)
+        await taskService.disapproveTask(this.id)
         this.showSuccess('Task disapproved')
+        await this.loadTask()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to disapprove task')
       }
     },
     async approvePublication() {
       try {
-        this.task = await taskService.approvePublication(this.id)
+        await taskService.approvePublication(this.id)
         this.showSuccess('Task approved for publication')
+        await this.loadTask()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to approve publication')
       }
     },
     async publishTask() {
       try {
-        this.task = await taskService.publishTask(this.id)
+        await taskService.publishTask(this.id)
         this.showSuccess('Task published')
+        await this.loadTask()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to publish task')
       }
     },
     async rejectTask() {
       try {
-        this.task = await taskService.rejectTask(this.id)
+        await taskService.rejectTask(this.id)
         this.showSuccess('Task rejected')
+        await this.loadTask()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to reject task')
       }
     },
     async overrideProcessing() {
       try {
-        this.task = await taskService.overrideProcessing(this.id)
+        await taskService.overrideProcessing(this.id)
         this.showSuccess('Task moved to pending confirmation')
+        await this.loadTask()
       } catch (err) {
         this.showError(
           err.response?.data?.detail || 'Failed to override processing'
@@ -688,13 +752,101 @@ export default {
       this.showPublishModal = true
       this.currentCarouselIndex = 0
     },
+    async moveJobOrderUp() {
+      if (
+        !this.instagramImageJobs.length ||
+        this.currentCarouselIndex <= 0 ||
+        this.reorderingJobs
+      ) return
+      const jobs = this.instagramImageJobs
+      const current = jobs[this.currentCarouselIndex]
+      const previous = jobs[this.currentCarouselIndex - 1]
+      const currentOrder = Number(current.order ?? 0)
+      const previousOrder = Number(previous.order ?? 0)
+      const movedJobId = current.id
+      this.reorderingJobs = true
+      try {
+        // Give current job a higher order so it appears earlier (before previous)
+        const newOrderCurrent = previousOrder + 1
+        const newOrderPrevious = currentOrder
+        await taskService.updateJob(this.id, current.id, { order: newOrderCurrent })
+        await taskService.updateJob(this.id, previous.id, { order: newOrderPrevious })
+        await this.loadTask()
+        const idx = this.instagramImageJobs.findIndex((j) => j.id === movedJobId)
+        this.currentCarouselIndex = idx >= 0 ? idx : 0
+        this.showSuccess('Order updated')
+      } catch (err) {
+        this.showError(
+          err.response?.data?.detail || err.message || 'Failed to update order'
+        )
+      } finally {
+        this.reorderingJobs = false
+      }
+    },
+    async moveJobOrderDown() {
+      if (
+        !this.instagramImageJobs.length ||
+        this.currentCarouselIndex >= this.instagramImageJobs.length - 1 ||
+        this.reorderingJobs
+      ) return
+      const jobs = this.instagramImageJobs
+      const current = jobs[this.currentCarouselIndex]
+      const next = jobs[this.currentCarouselIndex + 1]
+      const currentOrder = Number(current.order ?? 0)
+      const nextOrder = Number(next.order ?? 0)
+      const movedJobId = current.id
+      this.reorderingJobs = true
+      try {
+        // Give current job a lower order so it appears later (after next)
+        const newOrderCurrent = nextOrder - 1
+        const newOrderNext = currentOrder
+        await taskService.updateJob(this.id, current.id, { order: newOrderCurrent })
+        await taskService.updateJob(this.id, next.id, { order: newOrderNext })
+        await this.loadTask()
+        const idx = this.instagramImageJobs.findIndex((j) => j.id === movedJobId)
+        this.currentCarouselIndex = idx >= 0 ? idx : 0
+        this.showSuccess('Order updated')
+      } catch (err) {
+        this.showError(
+          err.response?.data?.detail || err.message || 'Failed to update order'
+        )
+      } finally {
+        this.reorderingJobs = false
+      }
+    },
     closePublishPreview() {
       this.showPublishModal = false
     },
-    confirmPublishPreview() {
-      // For now this only confirms and closes the modal without calling backend.
+    async approvePublicationFromPreview() {
+      try {
+        await taskService.approvePublication(this.id)
+        this.showSuccess('Task approved for publication')
+        await this.loadTask()
+        // Popup stays open; task is now 'ready', so footer shows Publish button
+      } catch (err) {
+        this.showError(err.response?.data?.detail || 'Failed to approve publication')
+      }
+    },
+    async rejectTaskFromPreview() {
+      this.showPublishModal = false
+      try {
+        await taskService.rejectTask(this.id)
+        this.showSuccess('Task rejected')
+        await this.loadTask()
+      } catch (err) {
+        this.showError(err.response?.data?.detail || 'Failed to reject task')
+      }
+    },
+    async confirmPublishPreview() {
       if (confirm('Are you sure you want to publish this post?')) {
         this.showPublishModal = false
+        try {
+          await taskService.publishTask(this.id)
+          this.showSuccess('Task published')
+          await this.loadTask()
+        } catch (err) {
+          this.showError(err.response?.data?.detail || 'Failed to publish task')
+        }
       }
     },
     nextCarouselImage() {
@@ -985,76 +1137,8 @@ export default {
 </script>
 
 <style scoped>
-.detail-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 2rem;
-}
-
-.back-link {
-  color: #667eea;
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.back-link:hover {
-  text-decoration: underline;
-}
-
-.header-actions {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-}
-
 .task-detail-content {
   display: block;
-}
-
-.form-group {
-  margin-bottom: 1.5rem;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 500;
-  color: #374151;
-}
-
-.image-link {
-  display: inline-block;
-  margin-top: 0.5rem;
-  color: #667eea;
-  text-decoration: none;
-}
-
-.image-link-inline {
-  margin-left: 0.75rem;
-  font-size: 0.85rem;
-  color: #667eea;
-  text-decoration: underline;
-}
-
-.form-actions {
-  margin-top: 1.5rem;
-}
-
-.json-display {
-  background: #f5f5f5;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 1rem;
-  overflow-x: auto;
-}
-
-.json-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 0.85rem;
 }
 
 .image-preview {
@@ -1067,17 +1151,6 @@ export default {
   display: block;
   border-radius: 4px;
   border: 1px solid #ddd;
-}
-
-.json-display pre {
-  margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: #333;
-  white-space: pre-wrap;
-  word-wrap: break-word;
 }
 
 .jobs-section {
@@ -1152,86 +1225,8 @@ export default {
   cursor: pointer;
 }
 
-.link-button {
-  background: none;
-  border: none;
-  color: #667eea;
-  cursor: pointer;
-  padding: 0;
-  margin-left: 0.25rem;
-  text-decoration: underline;
-  font-size: inherit;
-}
-
-.link-button:hover {
-  color: #5568d3;
-}
-
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 0.8rem;
-}
-
-.job-id-clickable {
-  cursor: pointer;
-  color: #667eea;
-  text-decoration: underline;
-  user-select: none;
-}
-
-.job-id-clickable:hover {
-  color: #5568d3;
-  background-color: #f3f4f6;
-}
-
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal-content {
-  background: white;
-  padding: 2rem;
-  border-radius: 8px;
-  width: 90%;
-  max-width: 520px;
-  max-height: 90vh;
-  overflow-y: auto;
-}
-
-.modal-content h3 {
-  margin-bottom: 1.5rem;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 1rem;
-}
-
 .json-modal {
   max-width: 800px;
-}
-
-.json-textarea-large {
-  min-height: 50vh;
-  resize: vertical;
-  margin-top: 1rem;
-}
-
-.json-modal-help {
-  font-size: 0.85rem;
-  color: #6b7280;
-  margin-bottom: 0.5rem;
 }
 
 .image-modal {
@@ -1245,65 +1240,38 @@ export default {
   border-radius: 8px;
 }
 
-/* Top-of-screen toast messages */
-.toast-container {
-  position: fixed;
-  top: 1rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1100;
-  pointer-events: none;
-}
-
-.toast {
-  min-width: 260px;
-  max-width: 420px;
-  background: #111827;
-  color: #f9fafb;
-  padding: 0.5rem 0.9rem;
-  border-radius: 999px;
-  font-size: 0.85rem;
-  box-shadow: 0 10px 15px rgba(0, 0, 0, 0.15);
-  pointer-events: auto;
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.toast-error {
-  background: #7f1d1d;
-}
-
-.toast-success {
-  background: #064e3b;
-}
-
-.toast-fade-enter-active,
-.toast-fade-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-.toast-fade-enter-from,
-.toast-fade-leave-to {
-  opacity: 0;
-  transform: translate(-50%, -10px);
-}
-
-.btn-pink {
-  background-color: #ec4899; /* pink-500 */
-  color: #ffffff;
-}
-
-.btn-pink:hover {
-  background-color: #db2777; /* pink-600 */
-}
-
 .publish-modal h4 {
   margin-bottom: 0.75rem;
 }
 
 .instagram-preview-wrapper {
   margin-top: 1rem;
+}
+
+.instagram-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  gap: 1rem;
+}
+
+.instagram-preview-header h4 {
+  margin: 0;
+}
+
+.preview-order-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.preview-order-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #374151;
+  min-width: 2.5rem;
+  text-align: center;
 }
 
 .instagram-preview-card {

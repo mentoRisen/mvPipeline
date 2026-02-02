@@ -73,18 +73,5 @@ export default {
 .tasks-view-right {
   min-width: 0;
 }
-
-.placeholder {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-  min-height: 200px;
-  color: #6b7280;
-}
-
-.placeholder h3 {
-  margin-bottom: 0.5rem;
-}
 </style>
 

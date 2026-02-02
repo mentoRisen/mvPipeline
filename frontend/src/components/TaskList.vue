@@ -517,19 +517,6 @@ export default {
 </script>
 
 <style scoped>
-.task-list-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 2rem;
-}
-
-.header-actions {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-}
-
 .status-filter {
   padding: 0.5rem;
   border: 1px solid #ddd;
@@ -573,24 +560,6 @@ export default {
   background-color: #eef2ff;
 }
 
-.col-id .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 0.8rem;
-}
-
-.task-id-clickable {
-  cursor: pointer;
-  color: #667eea;
-  text-decoration: underline;
-  user-select: none;
-}
-
-.task-id-clickable:hover {
-  color: #5568d3;
-  background-color: #f3f4f6;
-}
-
 .quote-preview {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -598,11 +567,6 @@ export default {
   overflow: hidden;
   text-overflow: ellipsis;
   color: #4b5563;
-}
-
-.muted {
-  color: #9ca3af;
-  font-size: 0.85rem;
 }
 
 .col-actions {
@@ -618,154 +582,7 @@ export default {
   color: #999;
 }
 
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal-content {
-  background: white;
-  padding: 2rem;
-  border-radius: 8px;
-  width: 90%;
-  max-width: 500px;
-  max-height: 90vh;
-  overflow-y: auto;
-}
-
-.modal-content h3 {
-  margin-bottom: 1.5rem;
-}
-
-.form-group {
-  margin-bottom: 1rem;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 500;
-  color: #374151;
-}
-
-.required {
-  color: #ef4444;
-}
-
-.form-actions {
-  display: flex;
-  gap: 1rem;
-  justify-content: flex-end;
-  margin-top: 1.5rem;
-}
-
-.message-modal {
-  max-width: 450px;
-}
-
-.message-content {
-  padding: 1rem 0;
-}
-
-.message-content h3 {
-  margin-bottom: 1rem;
-  font-size: 1.25rem;
-}
-
-.message-content p {
-  margin-bottom: 1.5rem;
-  line-height: 1.6;
-  word-wrap: break-word;
-}
-
-.message-error h3 {
-  color: #991b1b;
-}
-
-.message-success h3 {
-  color: #065f46;
-}
-
-.message-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 1.5rem;
-}
-
-/* Top-of-screen toast messages */
-.toast-container {
-  position: fixed;
-  top: 1rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1100;
-  pointer-events: none;
-}
-
-.toast {
-  min-width: 260px;
-  max-width: 420px;
-  background: #111827;
-  color: #f9fafb;
-  padding: 0.5rem 0.9rem;
-  border-radius: 999px;
-  font-size: 0.85rem;
-  box-shadow: 0 10px 15px rgba(0, 0, 0, 0.15);
-  pointer-events: auto;
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.toast-success {
-  background: #064e3b;
-}
-
-.toast-fade-enter-active,
-.toast-fade-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-.toast-fade-enter-from,
-.toast-fade-leave-to {
-  opacity: 0;
-  transform: translate(-50%, -10px);
-}
-
-.btn-pink {
-  background-color: #ec4899; /* pink-500 */
-  color: #ffffff;
-}
-
-.btn-pink:hover {
-  background-color: #db2777; /* pink-600 */
-}
-
 .json-create-modal {
   max-width: 800px;
-}
-
-.json-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  font-size: 0.85rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 0.75rem;
-}
-
-.json-textarea-large {
-  min-height: 50vh;
-  resize: vertical;
 }
 </style>
