@@ -94,10 +94,16 @@ def publish_task_instagram(task: Task) -> dict:
     for i, url in enumerate(image_urls, 1):
         logger.info(f"  {i}. {url}")
     
-    # Get caption from task.post.caption
+    # Get caption from task.post.caption and add AI-generated disclosure
     caption = ""
     if task.post and isinstance(task.post, dict):
         caption = task.post.get("caption", "") or ""
+    # Add Meta's AI disclosure tag (required for AI-generated content)
+    ai_disclosure = " #ImaginedWithAI"
+    if caption and not caption.strip().endswith("#ImaginedWithAI"):
+        caption = caption.rstrip() + ai_disclosure
+    elif not caption.strip():
+        caption = ai_disclosure.strip()
     
     logger.info(f"Caption for post: {caption[:100] if caption else '(empty)'}")
     
