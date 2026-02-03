@@ -32,6 +32,13 @@ Pipeline for generating quote images and publishing to Instagram. Multi-tenant: 
      export DEFAULT_IMAGE_GENERATOR=dalle
      ```
 
+4. Configure authentication secrets:
+   ```
+   AUTH_SECRET_KEY=replace-with-random-string
+   AUTH_ACCESS_TOKEN_EXPIRE_MINUTES=60  # optional
+   ```
+   `AUTH_SECRET_KEY` is required for signing JWT access tokens. Set these in your environment or `.env` file before starting the API.
+
 ## Database
 
 ### MySQL Setup
@@ -63,6 +70,33 @@ The application uses MySQL for data storage. Make sure MySQL is installed and ru
    ```
    
    The format is: `mysql+pymysql://user:password@host:port/database`
+
+## Authentication & Users
+
+All API routes under `/api/v1/*` now require a valid Bearer token. Only the root (`/`) and `/health` endpoints remain public.
+
+1. **Create the first user** (one-time bootstrap):
+   ```bash
+   python scripts/create_user.py --username admin --email you@example.com
+   ```
+   Omit `--password` to be prompted securely. Run the script again any time you need to add more users.
+2. **Sign in** with the Vue UI by visiting `http://localhost:3000/login` (or the `/login` route in production). After logging in, the token is stored in `localStorage` and attached to all API calls automatically.
+3. **API login** is also available programmatically:
+   - `POST /api/v1/auth/login` with JSON `{ "username": "...", "password": "..." }` returns `{ access_token, token_type, user }`.
+   - Include `Authorization: Bearer <token>` on every subsequent request.
+4. **User management** endpoints:
+   - `GET /api/v1/users` – list users (requires authentication)
+   - `POST /api/v1/users` – create user
+   - `PATCH /api/v1/users/{id}` – update email, password, or activation state
+
+Tokens expire after `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` (default 60). When a token expires, the frontend automatically returns to the login screen.
+
+### Manual Verification
+1. Start the API (`python -m app.main`) and frontend (`npm run dev` from `frontend/`).
+2. Create a user with `scripts/create_user.py` if you haven't already.
+3. Visit `http://localhost:3000/login`, sign in, and confirm the Tasks view loads.
+4. Try calling a protected endpoint without `Authorization` (e.g., `curl http://localhost:8000/api/v1/tasks`) and observe the `401 Unauthorized` response.
+5. Call the same endpoint with the `Authorization: Bearer <token>` header returned from `/auth/login` and confirm it succeeds.
 
 ## Running
 
@@ -236,6 +270,15 @@ On failure:
 ## API Endpoints
 
 The FastAPI server provides REST endpoints for task management:
+
+> **Note:** All endpoints below (except `/` and `/health`) require `Authorization: Bearer <token>`.
+
+### Authentication
+- `POST /api/v1/auth/login` – obtain an access token
+- `GET /api/v1/auth/me` – fetch the current user tied to the provided token
+- `GET /api/v1/users` – list users
+- `POST /api/v1/users` – create a user
+- `PATCH /api/v1/users/{user_id}` – update password/email/active flag
 
 ### Task CRUD
 - `GET /api/v1/tasks` - List all tasks (with pagination and optional status filter)

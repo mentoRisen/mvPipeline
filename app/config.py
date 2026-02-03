@@ -127,3 +127,13 @@ The worker processes READY jobs whose parent task is PROCESSING.
 Set via WORKER_CHECK_INTERVAL_SECONDS environment variable or .env file.
 Defaults to 30.
 """
+
+# Authentication configuration
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "change-me")
+"""Secret key used to sign JWT access tokens."""
+
+AUTH_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTH_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+"""Token lifetime in minutes."""
+
+AUTH_ALGORITHM = "HS256"
+"""JWT signing algorithm."""

@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import routes
+from app.api import routes, auth_routes
 from app.db.engine import create_tables
 from app.config import OUTPUT_DIR, LOGS_DIR
 from app.utils.logging_config import setup_logging
@@ -59,6 +59,7 @@ async def disable_output_cache(request, call_next):
 
 
 # Include API routes
+app.include_router(auth_routes.router)
 app.include_router(routes.router)
 
 # Serve generated output files (images) under /output

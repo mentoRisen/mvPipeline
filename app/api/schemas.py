@@ -144,3 +144,55 @@ class TaskListResponse(BaseModel):
 class ApprovalAction(BaseModel):
     """Schema for approval actions."""
     task_id: UUID = Field(..., description="ID of the task to approve")
+
+
+# --- User & Auth schemas ---
+
+
+class UserBase(BaseModel):
+    """Shared user fields."""
+
+    username: str = Field(..., description="Unique username")
+    email: Optional[str] = Field(None, description="Optional email for notifications")
+
+
+class UserCreate(UserBase):
+    """Schema for creating a user."""
+
+    password: str = Field(..., min_length=8, description="Plain-text password")
+    is_active: Optional[bool] = True
+
+
+class UserUpdate(BaseModel):
+    """Schema for updating a user."""
+
+    email: Optional[str] = None
+    password: Optional[str] = Field(None, min_length=8)
+    is_active: Optional[bool] = None
+
+
+class UserResponse(UserBase):
+    """Response schema for user details."""
+
+    id: UUID
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LoginRequest(BaseModel):
+    """Username + password login payload."""
+
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    """JWT token response."""
+
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse

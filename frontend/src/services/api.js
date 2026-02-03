@@ -1,6 +1,38 @@
 import axios from 'axios'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+const TOKEN_STORAGE_KEY = 'mv_auth_token'
+
+let authToken = (() => {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY)
+  } catch (_) {
+    return null
+  }
+})()
+
+let unauthorizedHandler = null
+
+export function getStoredAuthToken() {
+  return authToken
+}
+
+export function setAuthToken(token) {
+  authToken = token
+  try {
+    if (token) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, token)
+    } else {
+      localStorage.removeItem(TOKEN_STORAGE_KEY)
+    }
+  } catch (_) {
+    // Ignore storage errors (private browsing, etc.)
+  }
+}
+
+export function setUnauthorizedHandler(handler) {
+  unauthorizedHandler = handler
+}
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -8,6 +40,23 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+api.interceptors.request.use((config) => {
+  if (authToken) {
+    config.headers.Authorization = `Bearer ${authToken}`
+  }
+  return config
+})
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (authToken && error?.response?.status === 401 && typeof unauthorizedHandler === 'function') {
+      unauthorizedHandler(error)
+    }
+    return Promise.reject(error)
+  }
+)
 
 export const taskService = {
   // Get all tasks
@@ -148,6 +197,18 @@ export const tenantService = {
 
   async deleteTenant(id) {
     await api.delete(`/tenants/${id}`)
+  },
+}
+
+export const authService = {
+  async login(credentials) {
+    const response = await api.post('/auth/login', credentials)
+    return response.data
+  },
+
+  async getCurrentUser() {
+    const response = await api.get('/auth/me')
+    return response.data
   },
 }
 

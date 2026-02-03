@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
@@ -32,8 +32,13 @@ import app.services.tenant_repo as tenant_repo
 from app.template.base import Template
 from app.template.instagram_post import InstagramPost
 from app.services.jobs.processor import process_job as process_job_service
+from app.services import auth as auth_service
 
-router = APIRouter(prefix="/api/v1", tags=["tasks"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["tasks"],
+    dependencies=[Depends(auth_service.get_current_active_user)],
+)
 
 
 def get_template_instance(template_name: str) -> Template:

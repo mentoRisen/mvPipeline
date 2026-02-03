@@ -6,3 +6,6 @@ fastapi
 uvicorn[standard]
 pydantic>=2.0.0
 pymysql
+passlib[bcrypt]
+python-jose[cryptography]
+bcrypt>=4.1.2,<5
