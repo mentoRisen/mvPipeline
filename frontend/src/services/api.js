@@ -12,9 +12,12 @@ const api = axios.create({
 export const taskService = {
   // Get all tasks
   async getTasks(params = {}) {
-    const { limit = 100, offset = 0, status } = params
+    const { limit = 100, offset = 0, status, tenant_id } = params
+    const requestParams = { limit, offset }
+    if (status != null) requestParams.status = status
+    if (tenant_id != null) requestParams.tenant_id = tenant_id
     const response = await api.get('/tasks', {
-      params: { limit, offset, status },
+      params: requestParams,
     })
     return response.data
   },
@@ -113,6 +116,38 @@ export const taskService = {
   async getTemplate(templateName) {
     const response = await api.get(`/templates/${templateName}`)
     return response.data
+  },
+}
+
+export const tenantService = {
+  async getTenants(params = {}) {
+    const { limit = 100, offset = 0 } = params
+    const response = await api.get('/tenants', { params: { limit, offset } })
+    return response.data
+  },
+
+  async getDefaultTenant() {
+    const response = await api.get('/tenants/default')
+    return response.data
+  },
+
+  async getTenant(id) {
+    const response = await api.get(`/tenants/${id}`)
+    return response.data
+  },
+
+  async createTenant(data) {
+    const response = await api.post('/tenants', data)
+    return response.data
+  },
+
+  async updateTenant(id, data) {
+    const response = await api.put(`/tenants/${id}`, data)
+    return response.data
+  },
+
+  async deleteTenant(id) {
+    await api.delete(`/tenants/${id}`)
   },
 }
 

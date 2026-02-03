@@ -56,6 +56,14 @@ class Task(SQLModel, table=True):
         description="Unique identifier for the task"
     )
     
+    # Tenant association (optional for backwards compatibility)
+    tenant_id: Optional[UUID] = Field(
+        default=None,
+        foreign_key="tenants.id",
+        index=True,
+        description="Tenant this task belongs to"
+    )
+    
     # Status tracking
     status: TaskStatus = Field(
         default=TaskStatus.DRAFT,

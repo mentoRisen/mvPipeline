@@ -164,6 +164,7 @@
 
 <script>
 import { taskService } from '../services/api'
+import { tenantStore } from '../tenantStore'
 
 export default {
   name: 'TaskList',
@@ -184,12 +185,24 @@ export default {
       newTask: {
         name: '',
         template: '',
+        tenant_id: null,
       },
+      tenantStore,
       messageTimeout: null,
       showCreateFromJsonModal: false,
       jsonTemplateName: '',
       jsonTemplateText: '',
     }
+  },
+  computed: {
+    currentTenantId() {
+      return this.tenantStore.currentTenantId
+    },
+  },
+  watch: {
+    currentTenantId() {
+      this.loadTasks()
+    },
   },
   mounted() {
     this.loadTasks()
@@ -202,6 +215,9 @@ export default {
         const params = {}
         if (this.selectedStatus) {
           params.status = this.selectedStatus
+        }
+        if (tenantStore.currentTenantId) {
+          params.tenant_id = tenantStore.currentTenantId
         }
         const data = await taskService.getTasks(params)
         this.tasks = data.tasks
@@ -270,11 +286,17 @@ export default {
         this.showError('Name and template are required')
         return
       }
+      const payload = { ...this.newTask }
+      if (tenantStore.currentTenantId) {
+        payload.tenant_id = tenantStore.currentTenantId
+      } else {
+        delete payload.tenant_id
+      }
       try {
-        await taskService.createTask(this.newTask)
+        await taskService.createTask(payload)
         this.showSuccess('Task created successfully')
         this.showCreateModal = false
-        this.newTask = { name: '', template: '' }
+        this.newTask = { name: '', template: '', tenant_id: null }
         this.loadTasks()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to create task')
@@ -469,6 +491,11 @@ export default {
             
             console.log(`[createTaskFromJson] After cleanup - job prompt:`, JSON.stringify(job.prompt))
           }
+        }
+
+        // Use current tenant when creating
+        if (tenantStore.currentTenantId) {
+          taskData.tenant_id = tenantStore.currentTenantId
         }
 
         // Create task

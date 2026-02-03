@@ -10,10 +10,53 @@ from app.models.task import TaskStatus
 from app.models.job import JobStatus
 
 
+# --- Tenant schemas ---
+
+
+class TenantCreate(BaseModel):
+    """Schema for creating a tenant."""
+    tenant_id: str = Field(..., description="Unique tenant identifier (slug)")
+    name: str = Field(..., description="Display name for the tenant")
+    description: Optional[str] = None
+    instagram_account: Optional[str] = None
+    facebook_page: Optional[str] = None
+    is_active: Optional[bool] = True
+    env: Optional[dict] = None
+
+
+class TenantUpdate(BaseModel):
+    """Schema for updating a tenant."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    instagram_account: Optional[str] = None
+    facebook_page: Optional[str] = None
+    is_active: Optional[bool] = None
+    env: Optional[dict] = None
+
+
+class TenantResponse(BaseModel):
+    """Schema for tenant response."""
+    id: UUID
+    tenant_id: str
+    name: str
+    description: Optional[str] = None
+    instagram_account: Optional[str] = None
+    facebook_page: Optional[str] = None
+    is_active: bool = True
+    env: Optional[dict] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# --- Task schemas ---
+
 class TaskCreate(BaseModel):
     """Schema for creating a new task."""
     name: str = Field(..., description="Task name/identifier")
     template: str = Field(..., description="Template identifier or name")
+    tenant_id: Optional[UUID] = Field(None, description="Tenant this task belongs to")
     quote_text: Optional[str] = None
     caption_text: Optional[str] = None
     image_generator: Optional[str] = None
@@ -69,6 +112,7 @@ class TaskResponse(BaseModel):
     """Schema for task response."""
     id: UUID
     status: TaskStatus
+    tenant_id: Optional[UUID] = None
     name: Optional[str] = None
     template: Optional[str] = None
     quote_text: Optional[str] = None

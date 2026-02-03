@@ -13,17 +13,22 @@ logger = logging.getLogger(__name__)
 
 from app.models.task import Task, TaskStatus
 from app.models.job import Job, JobStatus
+from app.models.tenant import Tenant
 from app.api.schemas import (
     TaskCreate,
     TaskUpdate,
     TaskResponse,
     TaskListResponse,
+    TenantCreate,
+    TenantUpdate,
+    TenantResponse,
     JobCreate,
     JobUpdate,
     JobResponse,
 )
 from app.db.engine import engine
 import app.services.task_repo as task_repo
+import app.services.tenant_repo as tenant_repo
 from app.template.base import Template
 from app.template.instagram_post import InstagramPost
 from app.services.jobs.processor import process_job as process_job_service
@@ -60,32 +65,122 @@ def get_db_session():
         yield session
 
 
+# --- Tenant routes ---
+
+
+@router.get("/tenants", response_model=list[TenantResponse])
+def list_tenants(
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    """List all tenants."""
+    tenants = tenant_repo.list_all_tenants(limit=limit, offset=offset)
+    return [TenantResponse.model_validate(t) for t in tenants]
+
+
+@router.get("/tenants/default", response_model=TenantResponse)
+def get_default_tenant():
+    """Get the default tenant (DEFAULT_TENANT_ID or first tenant)."""
+    tenant = tenant_repo.get_default_tenant()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="No tenants found")
+    return TenantResponse.model_validate(tenant)
+
+
+@router.get("/tenants/{tenant_uuid}", response_model=TenantResponse)
+def get_tenant(tenant_uuid: UUID):
+    """Get a tenant by UUID."""
+    tenant = tenant_repo.get_tenant_by_id(tenant_uuid)
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant {tenant_uuid} not found")
+    return TenantResponse.model_validate(tenant)
+
+
+@router.post("/tenants", response_model=TenantResponse, status_code=201)
+def create_tenant_route(data: TenantCreate):
+    """Create a new tenant."""
+    if tenant_repo.get_tenant_by_tenant_id(data.tenant_id):
+        raise HTTPException(status_code=400, detail=f"Tenant with tenant_id '{data.tenant_id}' already exists")
+    try:
+        tenant = tenant_repo.create_tenant(
+            tenant_id=data.tenant_id,
+            name=data.name,
+            description=data.description,
+            instagram_account=data.instagram_account,
+            facebook_page=data.facebook_page,
+            is_active=data.is_active if data.is_active is not None else True,
+            env=data.env,
+        )
+        return TenantResponse.model_validate(tenant)
+    except IntegrityError as e:
+        raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
+
+
+@router.put("/tenants/{tenant_uuid}", response_model=TenantResponse)
+def update_tenant(tenant_uuid: UUID, data: TenantUpdate):
+    """Update a tenant."""
+    tenant = tenant_repo.get_tenant_by_id(tenant_uuid)
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant {tenant_uuid} not found")
+    if data.name is not None:
+        tenant.name = data.name
+    if data.description is not None:
+        tenant.description = data.description
+    if data.instagram_account is not None:
+        tenant.instagram_account = data.instagram_account
+    if data.facebook_page is not None:
+        tenant.facebook_page = data.facebook_page
+    if data.is_active is not None:
+        tenant.is_active = data.is_active
+    if data.env is not None:
+        tenant.env = data.env
+    tenant = tenant_repo.save_tenant(tenant)
+    return TenantResponse.model_validate(tenant)
+
+
+@router.delete("/tenants/{tenant_uuid}", status_code=204)
+def delete_tenant_route(tenant_uuid: UUID):
+    """Delete a tenant. Tasks with this tenant_id will have tenant_id set to NULL (if FK allows)."""
+    tenant = tenant_repo.get_tenant_by_id(tenant_uuid)
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant {tenant_uuid} not found")
+    tenant_repo.delete_tenant(tenant)
+    return None
+
+
+# --- Task routes ---
+
+
 @router.get("/tasks", response_model=TaskListResponse)
 def list_tasks(
     limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of tasks to return"),
     offset: int = Query(default=0, ge=0, description="Number of tasks to skip"),
     status: Optional[TaskStatus] = Query(default=None, description="Filter by task status"),
+    tenant_id: Optional[UUID] = Query(default=None, description="Filter by tenant ID"),
 ):
-    """List all tasks with optional status filtering and pagination.
+    """List all tasks with optional status/tenant filtering and pagination.
     
     Args:
         limit: Maximum number of tasks to return (1-1000)
         offset: Number of tasks to skip
         status: Optional status filter
+        tenant_id: Optional tenant filter
         
     Returns:
         Paginated list of tasks
     """
     with Session(engine) as session:
         if status:
-            tasks = task_repo.list_tasks_by_status(status, limit=limit)
-            # Get total count for this status
+            tasks = task_repo.list_tasks_by_status(status, limit=limit, tenant_id=tenant_id)
             statement = select(Task).where(Task.status == status)
+            if tenant_id is not None:
+                statement = statement.where(Task.tenant_id == tenant_id)
             total = len(list(session.exec(statement).all()))
         else:
-            tasks = task_repo.list_all_tasks(limit=limit, offset=offset)
-            # Get total count
+            tasks = task_repo.list_all_tasks(limit=limit, offset=offset, tenant_id=tenant_id)
             statement = select(Task)
+            if tenant_id is not None:
+                statement = statement.where(Task.tenant_id == tenant_id)
             total = len(list(session.exec(statement).all()))
         
         return TaskListResponse(
@@ -147,6 +242,8 @@ def create_task(task_data: TaskCreate):
         # Set required fields
         task.name = task_data.name
         task.template = task_data.template
+        if task_data.tenant_id is not None:
+            task.tenant_id = task_data.tenant_id
         
         # Get template instance and populate meta and post from template
         template_instance = get_template_instance(task_data.template)
@@ -440,23 +537,27 @@ def override_task_processing(task_id: UUID):
 
 
 @router.get("/tasks/status/{status}", response_model=TaskListResponse)
-def list_tasks_by_status(
+def list_tasks_by_status_route(
     status: TaskStatus,
     limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of tasks to return"),
+    tenant_id: Optional[UUID] = Query(default=None, description="Filter by tenant ID"),
 ):
     """List tasks filtered by status.
     
     Args:
         status: Task status to filter by
         limit: Maximum number of tasks to return
+        tenant_id: Optional tenant filter
         
     Returns:
         List of tasks with the specified status
     """
-    tasks = task_repo.list_tasks_by_status(status, limit=limit)
+    tasks = task_repo.list_tasks_by_status(status, limit=limit, tenant_id=tenant_id)
     
     with Session(engine) as session:
         statement = select(Task).where(Task.status == status)
+        if tenant_id is not None:
+            statement = statement.where(Task.tenant_id == tenant_id)
         total = len(list(session.exec(statement).all()))
     
     return TaskListResponse(

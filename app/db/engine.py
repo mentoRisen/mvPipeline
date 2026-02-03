@@ -36,5 +36,6 @@ def create_tables():
     
     Call this once at application startup to ensure tables exist.
     """
+    import app.models  # noqa: F401 - register all models (Tenant, Task, Job) before create_all
     SQLModel.metadata.create_all(engine)
 

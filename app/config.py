@@ -111,6 +111,14 @@ Get from: https://developers.facebook.com/docs/instagram-api/getting-started
 Set via INSTAGRAM_ACCOUNT_ID environment variable or .env file.
 """
 
+# Default tenant configuration
+DEFAULT_TENANT_ID = os.getenv("DEFAULT_TENANT_ID")
+"""Optional default tenant identifier (matches Tenant.tenant_id).
+
+If set, the API will prefer this tenant as the default "picked" tenant
+in Mentoverse Pipeline when no tenant is selected yet.
+"""
+
 # Background worker configuration
 WORKER_CHECK_INTERVAL_SECONDS = int(os.getenv("WORKER_CHECK_INTERVAL_SECONDS", "30"))
 """Interval in seconds between checks for processable jobs.

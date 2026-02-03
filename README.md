@@ -1,6 +1,6 @@
-# Quote-Image Pipeline MVP
+# Mentoverse Pipeline
 
-Minimal Python pipeline for generating quote images for Instagram posts.
+Pipeline for generating quote images and publishing to Instagram. Multi-tenant: manage projects (tenants) with separate configs and Instagram accounts.
 
 ## Setup
 

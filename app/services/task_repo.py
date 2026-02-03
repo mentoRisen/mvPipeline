@@ -9,13 +9,16 @@ from app.models.job import Job, JobStatus
 from app.db.engine import engine
 
 
-def create_task() -> Task:
+def create_task(tenant_id: Optional[UUID] = None) -> Task:
     """Create a new task with default DRAFT status.
     
+    Args:
+        tenant_id: Optional tenant ID to associate the task with
+        
     Returns:
         Task: The newly created task
     """
-    task = Task()
+    task = Task(tenant_id=tenant_id)
     with Session(engine) as session:
         session.add(task)
         session.commit()
@@ -38,23 +41,26 @@ def get_task_by_id(task_id: UUID) -> Optional[Task]:
         return result
 
 
-def list_all_tasks(limit: int = 100, offset: int = 0) -> list[Task]:
+def list_all_tasks(
+    limit: int = 100,
+    offset: int = 0,
+    tenant_id: Optional[UUID] = None,
+) -> list[Task]:
     """List all tasks with pagination.
     
     Args:
         limit: Maximum number of tasks to return (default: 100)
         offset: Number of tasks to skip (default: 0)
+        tenant_id: Optional filter by tenant ID
         
     Returns:
         List of tasks, ordered by creation time (newest first)
     """
     with Session(engine) as session:
-        statement = (
-            select(Task)
-            .order_by(Task.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        statement = select(Task).order_by(Task.created_at.desc())
+        if tenant_id is not None:
+            statement = statement.where(Task.tenant_id == tenant_id)
+        statement = statement.limit(limit).offset(offset)
         results = session.exec(statement).all()
         return list(results)
 
@@ -85,23 +91,26 @@ def get_next_task_by_status(status: TaskStatus) -> Optional[Task]:
         return result
 
 
-def list_tasks_by_status(status: TaskStatus, limit: int = 100) -> list[Task]:
+def list_tasks_by_status(
+    status: TaskStatus,
+    limit: int = 100,
+    tenant_id: Optional[UUID] = None,
+) -> list[Task]:
     """List tasks filtered by status.
     
     Args:
         status: The status to filter by
         limit: Maximum number of tasks to return (default: 100)
+        tenant_id: Optional filter by tenant ID
         
     Returns:
         List of tasks with the specified status, ordered by creation time
     """
     with Session(engine) as session:
-        statement = (
-            select(Task)
-            .where(Task.status == status)
-            .order_by(Task.created_at)
-            .limit(limit)
-        )
+        statement = select(Task).where(Task.status == status)
+        if tenant_id is not None:
+            statement = statement.where(Task.tenant_id == tenant_id)
+        statement = statement.order_by(Task.created_at).limit(limit)
         results = session.exec(statement).all()
         return list(results)
 

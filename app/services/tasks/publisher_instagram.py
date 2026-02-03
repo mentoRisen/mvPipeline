@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 
 from app.models.task import Task
 from app.models.job import Job
+from app.models.tenant import Tenant
 from app.services.instagram_publisher import (
     InstagramPublisher,
     PUBLISH_INITIAL_DELAY,
@@ -22,6 +23,15 @@ from app.services.instagram_publisher import (
 from app.db.engine import engine
 
 logger = logging.getLogger(__name__)
+
+
+def _get_tenant_env(task: Task) -> dict:
+    """Load tenant env for task. Returns empty dict if no tenant."""
+    if not task.tenant_id:
+        return {}
+    with Session(engine) as session:
+        tenant = session.get(Tenant, task.tenant_id)
+        return (tenant.env or {}) if tenant else {}
 
 
 def publish_task_instagram(task: Task) -> dict:
@@ -41,6 +51,9 @@ def publish_task_instagram(task: Task) -> dict:
         requests.RequestException: If Instagram API request fails
     """
     logger.info(f"Publishing task {task.id} to Instagram as carousel post")
+    
+    # Tenant-specific env (e.g. INSTAGRAM_ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID, PUBLIC_URL)
+    tenant_env = _get_tenant_env(task)
     
     # Load jobs for this task ordered by custom order (descending), then by creation time (oldest first)
     with Session(engine) as session:
@@ -76,9 +89,8 @@ def publish_task_instagram(task: Task) -> dict:
             image_path = job.result.get("image_path") or job.result.get("image_path_relative")
             logger.debug(f"Job {job.id}: image_path = {image_path}")
             if image_path:
-                # Try to get PUBLIC_URL from environment
-                import os
-                public_url_base = os.getenv("PUBLIC_URL")
+                # Try tenant env first, then os environment
+                public_url_base = tenant_env.get("PUBLIC_URL") or os.getenv("PUBLIC_URL")
                 logger.debug(f"PUBLIC_URL from env: {public_url_base}")
                 if public_url_base:
                     base = str(public_url_base).rstrip("/")
@@ -111,9 +123,14 @@ def publish_task_instagram(task: Task) -> dict:
     
     logger.info(f"Caption for post: {caption[:100] if caption else '(empty)'}")
     
-    # Initialize Instagram publisher
+    # Initialize Instagram publisher (use tenant env for credentials when available)
     logger.info("Initializing Instagram publisher...")
-    publisher = InstagramPublisher()
+    access_token = tenant_env.get("INSTAGRAM_ACCESS_TOKEN") or os.getenv("INSTAGRAM_ACCESS_TOKEN")
+    instagram_account_id = tenant_env.get("INSTAGRAM_ACCOUNT_ID") or os.getenv("INSTAGRAM_ACCOUNT_ID")
+    publisher = InstagramPublisher(
+        access_token=access_token,
+        instagram_account_id=instagram_account_id,
+    )
     logger.info(f"Instagram account ID: {publisher.instagram_account_id}")
     logger.info(f"Base URL: {publisher.base_url}")
     
