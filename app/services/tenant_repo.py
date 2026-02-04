@@ -11,7 +11,6 @@ from app.config import DEFAULT_TENANT_ID
 
 
 def create_tenant(
-    tenant_id: str,
     name: str,
     description: Optional[str] = None,
     instagram_account: Optional[str] = None,
@@ -22,7 +21,6 @@ def create_tenant(
     """Create a new tenant.
     
     Args:
-        tenant_id: Unique tenant identifier (slug)
         name: Display name
         description: Optional description
         instagram_account: Optional Instagram account/handle
@@ -34,7 +32,6 @@ def create_tenant(
         The created tenant
     """
     tenant = Tenant(
-        tenant_id=tenant_id,
         name=name,
         description=description,
         instagram_account=instagram_account,
@@ -53,12 +50,6 @@ def get_tenant_by_id(tenant_uuid: UUID) -> Optional[Tenant]:
     """Get a tenant by its UUID."""
     with Session(engine) as session:
         return session.exec(select(Tenant).where(Tenant.id == tenant_uuid)).first()
-
-
-def get_tenant_by_tenant_id(tenant_id: str) -> Optional[Tenant]:
-    """Get a tenant by its tenant_id (slug)."""
-    with Session(engine) as session:
-        return session.exec(select(Tenant).where(Tenant.tenant_id == tenant_id)).first()
 
 
 def list_all_tenants(limit: int = 100, offset: int = 0) -> list[Tenant]:
@@ -102,17 +93,18 @@ def get_default_tenant() -> Optional[Tenant]:
     """Get the default tenant.
 
     Preference order:
-    1. Tenant whose tenant_id matches DEFAULT_TENANT_ID (if set)
+    1. Tenant whose id matches DEFAULT_TENANT_ID (if set, UUID string)
     2. The first tenant in the database (oldest by created_at)
     """
     with Session(engine) as session:
         tenant: Optional[Tenant] = None
 
-        # Prefer explicit default tenant if configured
+        # Prefer explicit default tenant if configured (UUID)
         if DEFAULT_TENANT_ID:
-            tenant = session.exec(
-                select(Tenant).where(Tenant.tenant_id == DEFAULT_TENANT_ID)
-            ).first()
+            try:
+                tenant = session.get(Tenant, UUID(DEFAULT_TENANT_ID))
+            except (ValueError, TypeError):
+                tenant = None
 
         # Fallback: first tenant by creation time
         if not tenant:

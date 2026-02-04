@@ -15,7 +15,6 @@ from app.models.job import JobStatus
 
 class TenantCreate(BaseModel):
     """Schema for creating a tenant."""
-    tenant_id: str = Field(..., description="Unique tenant identifier (slug)")
     name: str = Field(..., description="Display name for the tenant")
     description: Optional[str] = None
     instagram_account: Optional[str] = None
@@ -37,7 +36,6 @@ class TenantUpdate(BaseModel):
 class TenantResponse(BaseModel):
     """Schema for tenant response."""
     id: UUID
-    tenant_id: str
     name: str
     description: Optional[str] = None
     instagram_account: Optional[str] = None
@@ -196,3 +194,38 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+
+# --- ScheduleRule schemas ---
+
+
+class ScheduleRuleCreate(BaseModel):
+    """Schema for creating a schedule rule."""
+    tenant_id: UUID = Field(..., description="Tenant this rule belongs to")
+    action: str = Field(..., description="Action to perform (e.g. publish, remind)")
+    note: Optional[str] = Field(default=None, description="Optional note / description")
+    times: Optional[dict] = Field(
+        default=None,
+        description="JSON config, e.g. {'hour': 9, 'days': [1, 2, 3]} (cron-style DOW)",
+    )
+
+
+class ScheduleRuleUpdate(BaseModel):
+    """Schema for updating a schedule rule."""
+    action: Optional[str] = None
+    note: Optional[str] = None
+    times: Optional[dict] = None
+
+
+class ScheduleRuleResponse(BaseModel):
+    """Schema for schedule rule response."""
+    id: UUID
+    tenant_id: UUID
+    action: str
+    note: Optional[str] = None
+    times: Optional[dict] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

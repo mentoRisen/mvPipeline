@@ -13,18 +13,9 @@
 
       <form @submit.prevent="save" class="form-fields">
         <div class="form-group">
-          <label>Tenant ID (slug)</label>
-          <div class="id-fields">
-            <div>
-              <label class="inline-label">UUID:</label>
-              <input :value="form.id" type="text" readonly class="readonly uuid-input" />
-            </div>
-            <div>
-              <label class="inline-label">Tenant ID:</label>
-              <input v-model="form.tenant_id" type="text" readonly class="readonly" />
-            </div>
-          </div>
-          <small class="muted">Unique identifier; cannot be changed after creation.</small>
+          <label>ID</label>
+          <input :value="form.id" type="text" readonly class="readonly uuid-input" />
+          <small class="muted">Unique identifier (UUID).</small>
         </div>
         <div class="form-group">
           <label>Name</label>
@@ -112,7 +103,6 @@ export default {
       loading: false,
       form: {
         id: '',
-        tenant_id: '',
         name: '',
         description: '',
         instagram_account: '',
@@ -151,7 +141,6 @@ export default {
     syncFormFromTenant() {
       if (!this.tenant) return
       this.form.id = this.tenant.id != null ? String(this.tenant.id) : ''
-      this.form.tenant_id = this.tenant.tenant_id || ''
       this.form.name = this.tenant.name || ''
       this.form.description = this.tenant.description || ''
       this.form.instagram_account = this.tenant.instagram_account || ''

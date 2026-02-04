@@ -113,7 +113,7 @@ Set via INSTAGRAM_ACCOUNT_ID environment variable or .env file.
 
 # Default tenant configuration
 DEFAULT_TENANT_ID = os.getenv("DEFAULT_TENANT_ID")
-"""Optional default tenant identifier (matches Tenant.tenant_id).
+"""Optional default tenant UUID.
 
 If set, the API will prefer this tenant as the default "picked" tenant
 in Mentoverse Pipeline when no tenant is selected yet.

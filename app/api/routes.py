@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from app.models.task import Task, TaskStatus
 from app.models.job import Job, JobStatus
 from app.models.tenant import Tenant
+from app.models.schedule_rule import ScheduleRule
 from app.api.schemas import (
     TaskCreate,
     TaskUpdate,
@@ -25,10 +26,14 @@ from app.api.schemas import (
     JobCreate,
     JobUpdate,
     JobResponse,
+    ScheduleRuleCreate,
+    ScheduleRuleUpdate,
+    ScheduleRuleResponse,
 )
 from app.db.engine import engine
 import app.services.task_repo as task_repo
 import app.services.tenant_repo as tenant_repo
+import app.services.schedule_rule_repo as schedule_rule_repo
 from app.template.base import Template
 from app.template.instagram_post import InstagramPost
 from app.services.jobs.processor import process_job as process_job_service
@@ -104,11 +109,8 @@ def get_tenant(tenant_uuid: UUID):
 @router.post("/tenants", response_model=TenantResponse, status_code=201)
 def create_tenant_route(data: TenantCreate):
     """Create a new tenant."""
-    if tenant_repo.get_tenant_by_tenant_id(data.tenant_id):
-        raise HTTPException(status_code=400, detail=f"Tenant with tenant_id '{data.tenant_id}' already exists")
     try:
         tenant = tenant_repo.create_tenant(
-            tenant_id=data.tenant_id,
             name=data.name,
             description=data.description,
             instagram_account=data.instagram_account,
@@ -145,11 +147,78 @@ def update_tenant(tenant_uuid: UUID, data: TenantUpdate):
 
 @router.delete("/tenants/{tenant_uuid}", status_code=204)
 def delete_tenant_route(tenant_uuid: UUID):
-    """Delete a tenant. Tasks with this tenant_id will have tenant_id set to NULL (if FK allows)."""
+    """Delete a tenant. Tasks with this tenant will have tenant_id set to NULL."""
     tenant = tenant_repo.get_tenant_by_id(tenant_uuid)
     if not tenant:
         raise HTTPException(status_code=404, detail=f"Tenant {tenant_uuid} not found")
     tenant_repo.delete_tenant(tenant)
+    return None
+
+
+# --- ScheduleRule routes ---
+
+
+@router.get("/tenants/{tenant_uuid}/schedule-rules", response_model=list[ScheduleRuleResponse])
+def list_schedule_rules(
+    tenant_uuid: UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    """List schedule rules for a tenant."""
+    if not tenant_repo.get_tenant_by_id(tenant_uuid):
+        raise HTTPException(status_code=404, detail=f"Tenant {tenant_uuid} not found")
+    rules = schedule_rule_repo.list_schedule_rules_by_tenant(
+        tenant_id=tenant_uuid, limit=limit, offset=offset
+    )
+    return [ScheduleRuleResponse.model_validate(r) for r in rules]
+
+
+@router.get("/schedule-rules/{rule_id}", response_model=ScheduleRuleResponse)
+def get_schedule_rule(rule_id: UUID):
+    """Get a schedule rule by ID."""
+    rule = schedule_rule_repo.get_schedule_rule_by_id(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Schedule rule {rule_id} not found")
+    return ScheduleRuleResponse.model_validate(rule)
+
+
+@router.post("/schedule-rules", response_model=ScheduleRuleResponse, status_code=201)
+def create_schedule_rule_route(data: ScheduleRuleCreate):
+    """Create a new schedule rule."""
+    if not tenant_repo.get_tenant_by_id(data.tenant_id):
+        raise HTTPException(status_code=404, detail=f"Tenant {data.tenant_id} not found")
+    rule = schedule_rule_repo.create_schedule_rule(
+        tenant_id=data.tenant_id,
+        action=data.action,
+        note=data.note,
+        times=data.times,
+    )
+    return ScheduleRuleResponse.model_validate(rule)
+
+
+@router.put("/schedule-rules/{rule_id}", response_model=ScheduleRuleResponse)
+def update_schedule_rule_route(rule_id: UUID, data: ScheduleRuleUpdate):
+    """Update a schedule rule."""
+    rule = schedule_rule_repo.get_schedule_rule_by_id(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Schedule rule {rule_id} not found")
+    if data.action is not None:
+        rule.action = data.action
+    if data.note is not None:
+        rule.note = data.note
+    if data.times is not None:
+        rule.times = data.times
+    rule = schedule_rule_repo.save_schedule_rule(rule)
+    return ScheduleRuleResponse.model_validate(rule)
+
+
+@router.delete("/schedule-rules/{rule_id}", status_code=204)
+def delete_schedule_rule_route(rule_id: UUID):
+    """Delete a schedule rule."""
+    rule = schedule_rule_repo.get_schedule_rule_by_id(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Schedule rule {rule_id} not found")
+    schedule_rule_repo.delete_schedule_rule(rule)
     return None
 
 

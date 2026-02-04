@@ -28,13 +28,6 @@ class Tenant(SQLModel, table=True):
         description="Unique identifier for the tenant"
     )
     
-    # Human-readable identifier (e.g. "acme-instagram", "brand-x")
-    tenant_id: str = Field(
-        unique=True,
-        index=True,
-        description="Unique tenant identifier (slug)"
-    )
-    
     name: str = Field(
         description="Display name for the tenant"
     )

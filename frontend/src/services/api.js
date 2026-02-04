@@ -200,6 +200,32 @@ export const tenantService = {
   },
 }
 
+export const scheduleRuleService = {
+  async getByTenant(tenantId) {
+    const response = await api.get(`/tenants/${tenantId}/schedule-rules`)
+    return response.data
+  },
+
+  async get(id) {
+    const response = await api.get(`/schedule-rules/${id}`)
+    return response.data
+  },
+
+  async create(data) {
+    const response = await api.post('/schedule-rules', data)
+    return response.data
+  },
+
+  async update(id, data) {
+    const response = await api.put(`/schedule-rules/${id}`, data)
+    return response.data
+  },
+
+  async delete(id) {
+    await api.delete(`/schedule-rules/${id}`)
+  },
+}
+
 export const authService = {
   async login(credentials) {
     const response = await api.post('/auth/login', credentials)

@@ -7,6 +7,7 @@
           <nav>
             <router-link to="/" class="nav-link">Tasks</router-link>
             <router-link to="/tenants" class="nav-link">Tenants</router-link>
+            <router-link to="/scheduler" class="nav-link">Scheduler</router-link>
           </nav>
         </div>
         <div class="app-header-right">
@@ -78,7 +79,7 @@
               :class="{ 'tenant-picker-item-active': tenantStore.state.id === t.id }"
               @click="pickTenant(t)"
             >
-              <span class="tenant-picker-name">{{ t.name || t.tenant_id }}</span>
+              <span class="tenant-picker-name">{{ t.name || '—' }}</span>
               <span v-if="!t.is_active" class="tenant-picker-inactive">Inactive</span>
             </li>
           </ul>
@@ -149,7 +150,7 @@ export default {
       if (this.tenantStore.state.id) return
       try {
         const t = await tenantService.getDefaultTenant()
-        tenantStore.setCurrentTenant(t.id, t.name || t.tenant_id || 'Tenant')
+        tenantStore.setCurrentTenant(t.id, t.name || 'Tenant')
       } catch (e) {
         // No tenants or API error - user can pick/create later
         console.error('Failed to get default tenant', e)
@@ -169,7 +170,7 @@ export default {
       }
     },
     pickTenant(t) {
-      tenantStore.setCurrentTenant(t.id, t.name || t.tenant_id || 'Tenant')
+      tenantStore.setCurrentTenant(t.id, t.name || 'Tenant')
       this.showTenantPicker = false
     },
     handleLogout() {

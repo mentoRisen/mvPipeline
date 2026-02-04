@@ -103,11 +103,9 @@ export default {
     },
     async addTenant() {
       const nextNum = this.tenants.length + 1
-      const tenantId = `tenant-${Date.now()}`
-      const name = `tenant${nextNum}`
+      const name = `Tenant ${nextNum}`
       try {
         const created = await tenantService.createTenant({
-          tenant_id: tenantId,
           name,
           description: null,
           env: null,
