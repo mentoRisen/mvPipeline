@@ -65,6 +65,18 @@ def list_all_tasks(
         return list(results)
 
 
+def fetch_ready_task(tenant_id: UUID) -> Optional[Task]:
+    """Return the oldest READY task for the given tenant, or None if none."""
+    with Session(engine) as session:
+        statement = (
+            select(Task)
+            .where(Task.tenant_id == tenant_id, Task.status == TaskStatus.READY)
+            .order_by(Task.created_at.asc())
+            .limit(1)
+        )
+        return session.exec(statement).first()
+
+
 def get_next_task_by_status(status: TaskStatus) -> Optional[Task]:
     """Get the next available task with the given status.
     

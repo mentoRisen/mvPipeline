@@ -119,6 +119,15 @@ If set, the API will prefer this tenant as the default "picked" tenant
 in Mentoverse Pipeline when no tenant is selected yet.
 """
 
+# Scheduler timezone (for timeslot "YYYY-MM-DD-HH")
+SCHEDULER_TIMEZONE = os.getenv("SCHEDULER_TIMEZONE", "UTC")
+"""Timezone name for scheduler timeslots (e.g. Europe/Prague, America/New_York).
+
+Set in .env:
+    SCHEDULER_TIMEZONE=Europe/Prague
+Uses IANA timezone names. Defaults to UTC.
+"""
+
 # Background worker configuration
 WORKER_CHECK_INTERVAL_SECONDS = int(os.getenv("WORKER_CHECK_INTERVAL_SECONDS", "30"))
 """Interval in seconds between checks for processable jobs.
