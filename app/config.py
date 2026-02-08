@@ -137,11 +137,14 @@ Set via WORKER_CHECK_INTERVAL_SECONDS environment variable or .env file.
 Defaults to 30.
 """
 
+SCHEDULER_CHECK_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_CHECK_INTERVAL_SECONDS", "300"))
+"""Interval in seconds between scheduler runs (schedule rules / publish). Default 5 minutes."""
+
 # Authentication configuration
 AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "change-me")
 """Secret key used to sign JWT access tokens."""
 
-AUTH_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTH_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+AUTH_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTH_ACCESS_TOKEN_EXPIRE_MINUTES", "300"))
 """Token lifetime in minutes."""
 
 AUTH_ALGORITHM = "HS256"

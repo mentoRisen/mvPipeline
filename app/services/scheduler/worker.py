@@ -20,6 +20,7 @@ from app.models.schedule_rule import ScheduleRule
 from app.models.task import Task
 from app.services import task_repo
 from app.services.notifier import notify as notify_send
+from app.services.scheduler import action_publish
 from app.services.scheduler import action_testlog
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,8 @@ def run_schedule_rule(
         match rule.action:
             case "testlog":
                 action_testlog.do_action(task, log)
+            case "publish":
+                action_publish.do_action(task, log)
             case _:
                 raise ValueError(f"Unknown schedule rule action: {rule.action}")
         log.status = ScheduleLogStatus.DONE
@@ -193,7 +196,6 @@ def _run_scheduled_logs(session: Session, tenant_id: UUID, timeslot: str) -> Non
         rule = session.get(ScheduleRule, log.schedule_rule_id)
         if rule is not None:
             run_schedule_rule(session, rule, timeslot, log=log)
-        # TODO: actually run the action and update log status
 
 
 def run_worker() -> None:

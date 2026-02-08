@@ -175,7 +175,7 @@ import { scheduleRuleService } from '../services/api'
 
 const ACTION_OPTIONS = [
   { value: 'testlog', label: 'Test log' },
-  { value: 'publish_instagram', label: 'Publish Instagram' },
+  { value: 'publish', label: 'Publish Instagram' },
 ]
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
