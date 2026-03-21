@@ -8,7 +8,6 @@ all imagecontent jobs from the task.
 import logging
 import os
 import time
-from typing import Optional
 
 import requests
 from sqlmodel import Session, select
@@ -16,13 +15,107 @@ from sqlmodel import Session, select
 from app.models.task import Task
 from app.models.job import Job
 from app.models.tenant import Tenant
-from app.services.instagram_publisher import (
-    InstagramPublisher,
-    PUBLISH_INITIAL_DELAY,
-)
 from app.db.engine import engine
 
 logger = logging.getLogger(__name__)
+
+PUBLISH_INITIAL_DELAY = 5
+PUBLISH_MAX_RETRIES = 3
+PUBLISH_RETRY_DELAY = 5
+INSTAGRAM_ERROR_MEDIA_NOT_AVAILABLE = 9007
+
+
+class _InstagramPublisherClient:
+    """Minimal Instagram Graph API client for the current publish flow."""
+
+    def __init__(self, access_token: str | None, instagram_account_id: str | None):
+        self.access_token = access_token or os.getenv("INSTAGRAM_ACCESS_TOKEN")
+        self.instagram_account_id = instagram_account_id or os.getenv("INSTAGRAM_ACCOUNT_ID")
+
+        if not self.access_token:
+            raise ValueError(
+                "Instagram access token not provided. Set INSTAGRAM_ACCESS_TOKEN environment variable."
+            )
+        if not self.instagram_account_id:
+            raise ValueError(
+                "Instagram account ID not provided. Set INSTAGRAM_ACCOUNT_ID environment variable."
+            )
+
+        self.base_url = "https://graph.facebook.com/v18.0"
+
+    def publish_image(self, image_url: str, caption: str) -> dict:
+        """Publish one public image URL and return media info."""
+        if not image_url.startswith(("http://", "https://")):
+            raise ValueError(
+                "Instagram Graph API requires a publicly accessible image URL."
+            )
+
+        container_id = self._create_media_container(image_url, caption)
+        time.sleep(PUBLISH_INITIAL_DELAY)
+        media_id = self._publish_media_container(container_id)
+        media_info = self._get_media_info(media_id)
+        return {
+            "id": media_id,
+            "permalink": media_info.get("permalink", ""),
+        }
+
+    def _create_media_container(self, image_url: str, caption: str) -> str:
+        url = f"{self.base_url}/{self.instagram_account_id}/media"
+        params = {
+            "access_token": self.access_token,
+            "image_url": image_url,
+            "caption": caption,
+        }
+
+        response = requests.post(url, params=params)
+        response.raise_for_status()
+
+        result = response.json()
+        if "id" not in result:
+            raise ValueError(f"Failed to create media container: {result}")
+
+        return result["id"]
+
+    def _publish_media_container(self, container_id: str) -> str:
+        url = f"{self.base_url}/{self.instagram_account_id}/media_publish"
+        params = {
+            "access_token": self.access_token,
+            "creation_id": container_id,
+        }
+        for attempt in range(PUBLISH_MAX_RETRIES):
+            response = requests.post(url, params=params)
+            if response.ok:
+                result = response.json()
+                if "id" not in result:
+                    raise ValueError(f"Failed to publish media: {result}")
+                return result["id"]
+            try:
+                err_body = response.json()
+                code = err_body.get("error", {}).get("code")
+                if code == INSTAGRAM_ERROR_MEDIA_NOT_AVAILABLE and attempt < PUBLISH_MAX_RETRIES - 1:
+                    logger.warning(
+                        "Instagram media not ready yet (9007), retrying in %ds (attempt %d/%d)",
+                        PUBLISH_RETRY_DELAY,
+                        attempt + 1,
+                        PUBLISH_MAX_RETRIES,
+                    )
+                    time.sleep(PUBLISH_RETRY_DELAY)
+                    continue
+            except (ValueError, TypeError):
+                pass
+            response.raise_for_status()
+        response.raise_for_status()
+
+    def _get_media_info(self, media_id: str) -> dict:
+        url = f"{self.base_url}/{media_id}"
+        params = {
+            "access_token": self.access_token,
+            "fields": "id,permalink,media_type,timestamp",
+        }
+
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
 
 
 def _get_tenant_env(task: Task) -> dict:
@@ -127,7 +220,7 @@ def publish_task_instagram(task: Task) -> dict:
     logger.info("Initializing Instagram publisher...")
     access_token = tenant_env.get("INSTAGRAM_ACCESS_TOKEN") or os.getenv("INSTAGRAM_ACCESS_TOKEN")
     instagram_account_id = tenant_env.get("INSTAGRAM_ACCOUNT_ID") or os.getenv("INSTAGRAM_ACCOUNT_ID")
-    publisher = InstagramPublisher(
+    publisher = _InstagramPublisherClient(
         access_token=access_token,
         instagram_account_id=instagram_account_id,
     )
@@ -149,7 +242,7 @@ def publish_task_instagram(task: Task) -> dict:
 
 
 def _publish_carousel(
-    publisher: InstagramPublisher,
+    publisher: _InstagramPublisherClient,
     image_urls: list[str],
     caption: str,
 ) -> dict:
@@ -236,7 +329,7 @@ def _publish_carousel(
 
 
 def _create_carousel_container(
-    publisher: InstagramPublisher,
+    publisher: _InstagramPublisherClient,
     container_ids: list[str],
     caption: str,
 ) -> str:

@@ -182,28 +182,16 @@ The Vue frontend is located in the `frontend/` directory. To run it:
 
 See `frontend/README.md` for more details.
 
-### Pipeline Script
-
-Execute the pipeline once:
-```bash
-python scripts/run_once.py
-```
-
 ### Instagram Publishing
 
 Publish a task to Instagram:
 ```bash
-python scripts/publish.py <task_id>
+python scripts/publish_task.py <task_id>
 ```
 
 Example:
 ```bash
-python scripts/publish.py 123e4567-e89b-12d3-a456-426614174000
-```
-
-Dry run (validate without posting):
-```bash
-python scripts/publish.py <task_id> --dry-run
+python scripts/publish_task.py 123e4567-e89b-12d3-a456-426614174000
 ```
 
 **Requirements:**
@@ -243,22 +231,21 @@ It's the ID you get from your Facebook Page's `instagram_business_account` field
 
 ### Image Generators
 
-The pipeline supports two image generation methods:
+Image generation is handled by job processors under `app/services/jobs/`:
 
-- **Pillow** (default): Renders quote text on template image from `templates/` directory
-  - Set `task.image_generator = "pillow"` or leave empty
-  - Requires template image in `templates/default.png`
-
-- **DALL-E**: Generates images using OpenAI's DALL-E API
-  - Set `task.image_generator = "dalle"` in your code
-  - Requires `OPENAI_API_KEY` environment variable
-  - Uses `task.image_generator_prompt` to generate the image
+- **DALL-E** via `processor_dalle.py`
+  - Uses the job's `generator` and `prompt.prompt` fields
+  - Requires `OPENAI_API_KEY`
+- **GPT-Image-1.5** via `processor_gptimage15.py`
+  - Uses the job's `generator` and `prompt.prompt` fields
+  - Requires `OPENAI_API_KEY`
+- Generated files are written under `output/{task_id}/{job_id}.jpeg`
 
 ## Expected Output
 
 On success:
 - Task row created in database with status progression: `DRAFT` → `PROCESSING` → `READY`
-- Image file with quote text rendered on template created in `output/images/{task_id}.png`
+- Image job output created in `output/{task_id}/{job_id}.jpeg`
 - Console output showing task ID and final status `READY`
 - Exit code 0
 
