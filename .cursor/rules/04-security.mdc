@@ -1,0 +1,13 @@
+---
+description: Security rules for auth, tenant scope, secrets, and integrations
+alwaysApply: true
+---
+
+# Security
+
+- New backend routes must require authentication by default. Any unauthenticated route must be explicit and justified by the task.
+- Do not introduce hardcoded secrets, tokens, DSNs, passwords, or default production credentials in code, docs, or tests.
+- When modifying tenant-scoped backend behavior, move toward server-side tenant validation. Do not introduce new endpoints that rely only on frontend-selected tenant state.
+- New integration code must prefer explicit config inputs over hidden global lookup, especially for tenant-scoped credentials.
+- Do not log access tokens, passwords, raw credential material, or full third-party payloads that may contain secrets.
+- When modifying auth or credential handling, prefer fail-closed behavior over permissive fallbacks.

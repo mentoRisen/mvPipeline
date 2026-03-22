@@ -1,0 +1,12 @@
+---
+description: Core engineering rules for incremental work in mvPipeline
+alwaysApply: true
+---
+
+# Core Engineering
+
+- New code must preserve the current supported runtime shape unless the task explicitly changes it: FastAPI API, Vue frontend, MySQL persistence, per-tenant worker, scheduler-in-worker, local output files, and current integrations.
+- New backend code must reuse existing core concepts and status models such as `Task`, `Job`, `Tenant`, `ScheduleRule`, and `ScheduleLog` instead of introducing parallel workflow concepts.
+- When modifying existing code, move repeated workflow logic toward shared backend services instead of copying it into another route, script, or integration module.
+- Do not introduce additional dead code paths, legacy compatibility fields, or duplicate service variants.
+- When a change updates runtime behavior, config behavior, or architecture direction, update the relevant docs in the same task.

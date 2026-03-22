@@ -1,0 +1,12 @@
+---
+description: Testing expectations for workflow-heavy changes in an existing low-test repo
+alwaysApply: true
+---
+
+# Testing
+
+- New code that changes task, job, publish, scheduler, auth, or tenant-scoping behavior must include targeted verification at the narrowest practical seam.
+- When modifying existing backend workflows, prefer service-level or repository-level tests over route-only coverage when both are practical.
+- Do not introduce additional permanent `scripts/test_*.py` files for feature coverage. Use real tests when possible; keep one-off debug scripts temporary.
+- When automated coverage is not practical for an existing path, keep the change small, run the narrowest available check, and state exactly what was verified and what was not.
+- Bug fixes should include a regression check when the affected seam is testable.

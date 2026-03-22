@@ -1,0 +1,13 @@
+---
+description: Architecture constraints for transitional backend refactoring
+alwaysApply: true
+---
+
+# Architecture Constraints
+
+- Treat `app/api/`, `app/worker.py`, scheduler actions, and `scripts/` as delivery layers. New multi-step workflow logic must not start there.
+- New or modified multi-step backend flows must move toward a shared application-service boundary that can be reused by API, worker, scheduler, and scripts.
+- Do not introduce additional direct `Session(engine)` usage in route handlers when the same operation can live in a shared service or repository helper.
+- Do not introduce new direct external integration calls in route handlers. OpenAI, FTP, Instagram, Discord, and filesystem orchestration should stay behind service or adapter modules.
+- When modifying existing processing, publishing, or scheduler code, move toward explicit inputs and outputs and away from hidden global state.
+- Do not introduce additional uses of tenant config copied into global `os.environ`.
