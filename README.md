@@ -19,23 +19,21 @@ Pipeline for generating quote images and publishing to Instagram. Multi-tenant: 
    pip install sqlmodel python-dotenv pillow requests fastapi uvicorn[standard] pydantic>=2.0.0
    ```
 
-3. (Optional) Set up OpenAI API for DALL-E image generation:
+3. (Optional) Set up OpenAI API for image generation:
    - Get your API key from https://platform.openai.com/api-keys
    - Create a `.env` file in the project root:
      ```
      OPENAI_API_KEY=your-api-key-here
-     DEFAULT_IMAGE_GENERATOR=dalle
      ```
    - Or set environment variables:
      ```bash
      export OPENAI_API_KEY=your-api-key-here
-     export DEFAULT_IMAGE_GENERATOR=dalle
      ```
 
 4. Configure authentication secrets:
    ```
    AUTH_SECRET_KEY=replace-with-random-string
-   AUTH_ACCESS_TOKEN_EXPIRE_MINUTES=60  # optional
+   AUTH_ACCESS_TOKEN_EXPIRE_MINUTES=300  # optional
    ```
    `AUTH_SECRET_KEY` is required for signing JWT access tokens. Set these in your environment or `.env` file before starting the API.
 
@@ -56,7 +54,7 @@ The application uses MySQL for data storage. Make sure MySQL is installed and ru
 
 2. **Configure the connection**:
    
-   The default connection string is: `mysql+pymysql://root@localhost:3306/mvpipeline`
+   The default connection string in code is: `mysql+pymysql://mentor:mentor@localhost:3306/mvpipeline`
    
    You can override it via the `DATABASE_URL` environment variable or in your `.env` file:
    ```
@@ -89,7 +87,7 @@ All API routes under `/api/v1/*` now require a valid Bearer token. Only the root
    - `POST /api/v1/users` – create user
    - `PATCH /api/v1/users/{id}` – update email, password, or activation state
 
-Tokens expire after `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` (default 60). When a token expires, the frontend automatically returns to the login screen.
+Tokens expire after `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` (default 300). When a token expires, the frontend automatically returns to the login screen.
 
 ### Manual Verification
 1. Start the API (`python -m app.main`) and frontend (`npm run dev` from `frontend/`).
@@ -107,11 +105,11 @@ Tokens expire after `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` (default 60). When a toke
 ./startup.sh
 ```
 
-**Start both servers (foreground mode):**
+**Run one service in foreground mode:**
 ```bash
-./startup.sh -f
-# or
-./startup.sh --foreground
+./startup.sh -f --api
+./startup.sh -f --gui
+./startup.sh -f --worker --tenant-id=<UUID>
 ```
 
 **Start only API server:**
@@ -134,7 +132,7 @@ Tokens expire after `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` (default 60). When a toke
 ./startup.sh --gui -f              # Start only Frontend in foreground
 ```
 
-By default, servers run in the background with logs in `logs/`. Use `-f` or `--foreground` to run in the current terminal. Press `Ctrl+C` to stop.
+By default, servers run in the background with logs in `logs/`. Foreground mode only supports one of `--api`, `--gui`, or `--worker`. Press `Ctrl+C` to stop.
 
 **Note:** This script is Linux and Bash only.
 
@@ -182,6 +180,19 @@ The Vue frontend is located in the `frontend/` directory. To run it:
 
 See `frontend/README.md` for more details.
 
+#### Worker
+
+Run one worker per tenant:
+```bash
+python -m app.worker --tenant-id=<tenant-uuid>
+```
+
+Or using the startup script:
+```bash
+./startup.sh --worker --tenant-id=<tenant-uuid>
+./startup.sh -f --worker --tenant-id=<tenant-uuid>
+```
+
 ### Instagram Publishing
 
 Publish a task to Instagram:
@@ -195,8 +206,9 @@ python scripts/publish_task.py 123e4567-e89b-12d3-a456-426614174000
 ```
 
 **Requirements:**
-- Task must be in `READY` status
-- Task must have an image path
+- Task should normally be in `READY` status
+- The publisher service currently accepts tasks in `READY`, `PUBLISHING`, or `FAILED`
+- Task must have at least one `imagecontent` job with a usable public image URL, or enough data to construct one from `PUBLIC_URL`
 - Instagram API credentials must be configured (see Setup below)
 
 **Setup Instagram API:**
@@ -243,16 +255,20 @@ Image generation is handled by job processors under `app/services/jobs/`:
 
 ## Expected Output
 
-On success:
-- Task row created in database with status progression: `DRAFT` → `PROCESSING` → `READY`
-- Image job output created in `output/{task_id}/{job_id}.jpeg`
-- Console output showing task ID and final status `READY`
-- Exit code 0
+### Current Task Lifecycle
 
-On failure:
-- Task marked as `FAILED` in database
-- Error message printed to stderr
-- Exit code 1
+Typical runtime flow:
+- Task is created in `DRAFT`
+- User submits task: `DRAFT` → `PENDING_APPROVAL`
+- User approves processing: `PENDING_APPROVAL` → `PROCESSING`
+- All `NEW` jobs on the task become `READY`
+- Job processing runs per job: `READY` → `PROCESSING` → `PROCESSED` or `ERROR`
+- When all jobs are `PROCESSED`, task moves to `PENDING_CONFIRMATION`
+- User approves publication: `PENDING_CONFIRMATION` → `READY`
+- Publish runs: `READY` → `PUBLISHING` → `PUBLISHED` or `FAILED`
+
+Generated image output is written to:
+- `output/{task_id}/{job_id}.jpeg`
 
 ## API Endpoints
 
@@ -280,7 +296,7 @@ The FastAPI server provides REST endpoints for task management:
 - `POST /api/v1/tasks/{task_id}/approve-processing` - Approve task for processing
 - `POST /api/v1/tasks/{task_id}/disapprove` - Disapprove task
 - `POST /api/v1/tasks/{task_id}/approve-publication` - Approve task for publication
-- `POST /api/v1/tasks/{task_id}/publish` - Publish task (from READY to PUBLISHED)
+- `POST /api/v1/tasks/{task_id}/publish` - Publish task (normally from READY; service also accepts PUBLISHING or FAILED)
 - `POST /api/v1/tasks/{task_id}/reject` - Reject task from publication
 
 See the interactive API documentation at `/docs` for detailed request/response schemas.
