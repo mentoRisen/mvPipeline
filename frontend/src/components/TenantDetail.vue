@@ -281,7 +281,7 @@ export default {
 
 .link-external {
   font-size: 0.9rem;
-  color: #667eea;
+  color: var(--color-secondary);
   margin-top: 0.25rem;
   display: inline-block;
 }
@@ -330,8 +330,8 @@ export default {
   background: white;
   padding: 1.5rem;
   border-radius: 8px;
-  max-width: 400px;
-  width: 90%;
+  max-width: 100%;
+  width: 100%;
 }
 
 .modal-content h3 {

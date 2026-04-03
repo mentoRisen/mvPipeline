@@ -8,5 +8,7 @@ pydantic>=2.0.0
 pymysql
 passlib[bcrypt]
 python-jose[cryptography]
-bcrypt>=4.1.2,<5
+bcrypt==4.0.1
 sentry-sdk
+pytest
+httpx

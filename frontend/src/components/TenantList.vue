@@ -23,7 +23,7 @@
           :key="tenant.id"
           class="tenant-list-row"
           :class="{ 'row-selected': selectedTenantId === tenant.id }"
-          @click="selectTenant(tenant.id)"
+          @click="selectTenant(tenant)"
         >
           <div class="col-id">
             <span class="mono" :title="tenant.id">{{ String(tenant.id).slice(0, 8) }}</span>
@@ -57,6 +57,7 @@
 
 <script>
 import { tenantService } from '../services/api'
+import { tenantStore } from '../tenantStore'
 
 export default {
   name: 'TenantList',
@@ -88,7 +89,9 @@ export default {
         this.loading = false
       }
     },
-    selectTenant(id) {
+    selectTenant(tenant) {
+      const id = tenant.id
+      tenantStore.setCurrentTenant(id, tenant.name || 'Tenant')
       this.$emit('select-tenant', id)
     },
     isUrl(s) {
@@ -111,6 +114,7 @@ export default {
           env: null,
         })
         await this.loadTenants()
+        tenantStore.setCurrentTenant(created.id, created.name || name)
         this.$emit('select-tenant', created.id)
       } catch (e) {
         console.error('Failed to create tenant', e)
@@ -202,19 +206,9 @@ export default {
   min-width: 0;
 }
 
-.badge-active {
-  background: #d1fae5;
-  color: #065f46;
-}
-
-.badge-inactive {
-  background: #f3f4f6;
-  color: #6b7280;
-}
-
 .link-small {
-  font-size: 0.85rem;
-  color: #667eea;
+  font-size: var(--text-sm);
+  color: var(--color-secondary);
   text-decoration: none;
 }
 

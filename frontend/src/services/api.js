@@ -1,4 +1,8 @@
 import axios from 'axios'
+import { tenantStore } from '../tenantStore'
+
+/** Must match ``app.api.tenant_deps.TENANT_ID_HEADER``. */
+export const TENANT_ID_HEADER = 'X-Tenant-Id'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 const TOKEN_STORAGE_KEY = 'mv_auth_token'
@@ -44,6 +48,13 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   if (authToken) {
     config.headers.Authorization = `Bearer ${authToken}`
+  }
+  const skip = config.skipTenantHeader === true
+  if (!skip) {
+    const tid = tenantStore.currentTenantId
+    if (tid) {
+      config.headers[TENANT_ID_HEADER] = tid
+    }
   }
   return config
 })
@@ -166,17 +177,36 @@ export const taskService = {
     const response = await api.get(`/templates/${templateName}`)
     return response.data
   },
+
+  // Preview one AI-generated task draft
+  async previewAiTaskDraft(payload, options = {}) {
+    const response = await api.post('/tasks/ai-draft-preview', payload, {
+      signal: options.signal,
+    })
+    return response.data
+  },
+
+  // Confirm one reviewed AI-generated task draft
+  async confirmAiTaskDraft(payload, options = {}) {
+    const response = await api.post('/tasks/ai-draft-confirm', payload, {
+      signal: options.signal,
+    })
+    return response.data
+  },
 }
 
 export const tenantService = {
   async getTenants(params = {}) {
     const { limit = 100, offset = 0 } = params
-    const response = await api.get('/tenants', { params: { limit, offset } })
+    const response = await api.get('/tenants', {
+      params: { limit, offset },
+      skipTenantHeader: true,
+    })
     return response.data
   },
 
   async getDefaultTenant() {
-    const response = await api.get('/tenants/default')
+    const response = await api.get('/tenants/default', { skipTenantHeader: true })
     return response.data
   },
 
@@ -186,7 +216,7 @@ export const tenantService = {
   },
 
   async createTenant(data) {
-    const response = await api.post('/tenants', data)
+    const response = await api.post('/tenants', data, { skipTenantHeader: true })
     return response.data
   },
 
@@ -228,12 +258,12 @@ export const scheduleRuleService = {
 
 export const authService = {
   async login(credentials) {
-    const response = await api.post('/auth/login', credentials)
+    const response = await api.post('/auth/login', credentials, { skipTenantHeader: true })
     return response.data
   },
 
   async getCurrentUser() {
-    const response = await api.get('/auth/me')
+    const response = await api.get('/auth/me', { skipTenantHeader: true })
     return response.data
   },
 }

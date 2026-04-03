@@ -28,7 +28,7 @@ This glossary defines terms as they are used in this repository today. It is gro
 
 | Term | Definition In This Project | Ambiguity / Notes |
 |---|---|---|
-| `worker` | The long-running tenant-scoped process started by `python -m app.worker` that polls for ready jobs and periodically runs scheduler logic. | One worker per tenant is the intended operating model. |
+| `worker` | The long-running process started by `python -m app.worker` that polls for ready jobs and periodically runs scheduler logic. | It cycles all active tenants each pass (tenant context per tenant); optional `WORKER_TENANT_ID` limits to one tenant. |
 | `processor` | The service path that executes a job by generator type and writes back job/task state. | In practice, this means `app/services/jobs/processor.py` and generator-specific processors. |
 | `generator` | The job field selecting the image-generation implementation, such as `dalle` or `gptimage15`. | Schemas/comments imply broader meanings than what `processor.py` currently supports. |
 | `tenant context` | The current tenant stored in a `contextvars` variable and initialized by `init_context_by_tenant()`. | Important because scheduler/notifier logic depends on it being set. |

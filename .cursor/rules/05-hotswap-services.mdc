@@ -1,0 +1,13 @@
+---
+description: Hot-swap service topology for API/frontend testing
+alwaysApply: true
+---
+
+# Hot-Swap Services
+
+- The default live dev runtime uses systemd hot-swap services, not ad hoc long-running terminals: `mvpipeline-api.service` for the FastAPI backend and `mvpipeline-frontend-dev.service` for the Vite frontend.
+- Treat that runtime shape as the default assumption during implementation, testing, brainstorms, plans, and reviews unless the task explicitly says otherwise.
+- Do not start duplicate backend or frontend dev servers if these services are the intended environment. Check service status or existing terminals first.
+- When runtime verification or restart guidance is needed, prefer the documented service workflow in `docs/deployment-hetzner-flow-mentoverse.md` over improvised `uvicorn` or `npm run dev` commands.
+- Frontend hot-swap runs as Vite behind Nginx/TLS in this setup, so frontend validation should account for the persistent `mvpipeline-frontend-dev.service` path rather than assuming a temporary local browser-only dev server.
+- If a change touches backend runtime behavior, frontend build/runtime behavior, or dependency installation, include the relevant service restart and health verification in the validation plan.

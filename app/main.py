@@ -60,7 +60,8 @@ async def disable_output_cache(request, call_next):
 
 # Include API routes
 app.include_router(auth_routes.router)
-app.include_router(routes.router)
+app.include_router(routes.bootstrap_router)
+app.include_router(routes.scoped_router)
 
 # Serve generated output files (images) under /output
 app.mount(

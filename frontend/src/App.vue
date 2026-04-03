@@ -1,9 +1,9 @@
 <template>
   <div id="app">
     <template v-if="isAuthenticated">
-      <header class="app-header">
+      <header class="app-header" :style="headerStyle">
+        <span class="sr-only">mentoFlow</span>
         <div class="app-header-left">
-          <h1>Mentoverse Pipeline</h1>
           <nav>
             <router-link to="/" class="nav-link">Tasks</router-link>
             <router-link to="/tenants" class="nav-link">Tenants</router-link>
@@ -106,6 +106,7 @@
 import { authStore } from './authStore'
 import { tenantStore } from './tenantStore'
 import { tenantService } from './services/api'
+import logoUrl from './assets/mento-flow-logo.png'
 
 export default {
   name: 'App',
@@ -141,6 +142,11 @@ export default {
   computed: {
     isAuthenticated() {
       return Boolean(this.authStore.state.token)
+    },
+    headerStyle() {
+      return {
+        '--app-header-logo': `url(${JSON.stringify(logoUrl)})`,
+      }
     },
   },
   methods: {
@@ -256,7 +262,7 @@ export default {
 
 .tenant-picker-popup {
   min-width: 280px;
-  max-width: 90vw;
+  max-width: 100%;
   max-height: 80vh;
   overflow: auto;
 }
@@ -310,10 +316,18 @@ export default {
 .app-header-left {
   display: flex;
   align-items: center;
+  align-self: stretch;
   gap: 1rem;
+  /* Reserve horizontal space so nav does not sit under the background logo */
+  padding-inline-start: clamp(12rem, 38vh, 17.4rem);
+}
+
+.app-header-left :deep(.nav-link) {
+  font-size: var(--text-base);
 }
 
 .app-header-right {
+  align-self: stretch;
   display: flex;
   align-items: center;
   gap: 1rem;

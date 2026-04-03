@@ -15,6 +15,7 @@
           <option value="rejected">Rejected</option>
           <option value="failed">Failed</option>
         </select>
+        <button @click="showAiDraftModal = true" class="btn-primary">AI Create</button>
         <button @click="showCreateModal = true" class="btn-primary">Create Task</button>
         <button @click="openCreateFromJsonModal" class="btn-secondary">From JSON</button>
         <button @click="loadTasks" class="btn-pink">Refresh</button>
@@ -67,6 +68,14 @@
         </div>
       </div>
     </div>
+
+    <AiTaskDraftModal
+      :visible="showAiDraftModal"
+      :tenant-id="currentTenantId"
+      @close="showAiDraftModal = false"
+      @created="handleAiDraftCreated"
+      @discarded="handleAiDraftDiscarded"
+    />
 
     <!-- Create Task Modal -->
     <div v-if="showCreateModal" class="modal-overlay" @click="showCreateModal = false">
@@ -163,11 +172,15 @@
 </template>
 
 <script>
+import AiTaskDraftModal from './AiTaskDraftModal.vue'
 import { taskService } from '../services/api'
 import { tenantStore } from '../tenantStore'
 
 export default {
   name: 'TaskList',
+  components: {
+    AiTaskDraftModal,
+  },
   props: {
     selectedTaskId: {
       type: String,
@@ -181,11 +194,11 @@ export default {
       error: null,
       success: null,
       selectedStatus: '',
+      showAiDraftModal: false,
       showCreateModal: false,
       newTask: {
         name: '',
         template: '',
-        tenant_id: null,
       },
       tenantStore,
       messageTimeout: null,
@@ -200,7 +213,10 @@ export default {
     },
   },
   watch: {
-    currentTenantId() {
+    currentTenantId(newTenantId, oldTenantId) {
+      if (oldTenantId && newTenantId !== oldTenantId && this.showAiDraftModal) {
+        this.showAiDraftModal = false
+      }
       this.loadTasks()
     },
   },
@@ -209,15 +225,20 @@ export default {
   },
   methods: {
     async loadTasks() {
+      if (!tenantStore.currentTenantId) {
+        this.tasks = []
+        this.loading = false
+        this.error = 'Select a tenant from the header to view tasks.'
+        return
+      }
       this.loading = true
       this.error = null
       try {
-        const params = {}
+        const params = {
+          tenant_id: tenantStore.currentTenantId,
+        }
         if (this.selectedStatus) {
           params.status = this.selectedStatus
-        }
-        if (tenantStore.currentTenantId) {
-          params.tenant_id = tenantStore.currentTenantId
         }
         const data = await taskService.getTasks(params)
         this.tasks = data.tasks
@@ -286,20 +307,31 @@ export default {
         this.showError('Name and template are required')
         return
       }
-      const payload = { ...this.newTask }
-      if (tenantStore.currentTenantId) {
-        payload.tenant_id = tenantStore.currentTenantId
-      } else {
-        delete payload.tenant_id
+      if (!tenantStore.currentTenantId) {
+        this.showError('Select a tenant first')
+        return
       }
+      const payload = { ...this.newTask }
       try {
         await taskService.createTask(payload)
         this.showSuccess('Task created successfully')
         this.showCreateModal = false
-        this.newTask = { name: '', template: '', tenant_id: null }
+        this.newTask = { name: '', template: '' }
         this.loadTasks()
       } catch (err) {
         this.showError(err.response?.data?.detail || 'Failed to create task')
+      }
+    },
+    async handleAiDraftCreated(createdTask) {
+      this.showAiDraftModal = false
+      this.showSuccess(`AI draft created successfully: ${createdTask.id}`)
+      this.selectTask(createdTask.id)
+      await this.loadTasks()
+    },
+    handleAiDraftDiscarded(message) {
+      this.showAiDraftModal = false
+      if (message) {
+        this.showError(message)
       }
     },
     selectTask(id) {
@@ -493,9 +525,9 @@ export default {
           }
         }
 
-        // Use current tenant when creating
-        if (tenantStore.currentTenantId) {
-          taskData.tenant_id = tenantStore.currentTenantId
+        if (!tenantStore.currentTenantId) {
+          this.showError('Select a tenant first')
+          return
         }
 
         // Create task
@@ -610,6 +642,6 @@ export default {
 }
 
 .json-create-modal {
-  max-width: 800px;
+  max-width: 100%;
 }
 </style>

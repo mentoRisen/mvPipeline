@@ -64,6 +64,17 @@ def list_all_tenants(limit: int = 100, offset: int = 0) -> list[Tenant]:
         return list(session.exec(statement).all())
 
 
+def list_active_tenants() -> list[Tenant]:
+    """All tenants with ``is_active`` true, oldest-first (stable worker round-robin)."""
+    with Session(engine) as session:
+        statement = (
+            select(Tenant)
+            .where(Tenant.is_active.is_(True))
+            .order_by(Tenant.created_at.asc())
+        )
+        return list(session.exec(statement).all())
+
+
 def save_tenant(tenant: Tenant) -> Tenant:
     """Save a tenant to the database."""
     with Session(engine) as session:

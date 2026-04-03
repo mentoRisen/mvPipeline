@@ -65,3 +65,6 @@ htmlcov/
 .dmypy.json
 dmypy.json
 
+# Local tool run artifacts (e.g. ce-review)
+.context/
+

@@ -10,7 +10,7 @@ This document proposes a target architecture for the current codebase as it exis
 - The worker is a polling loop, not a queue consumer. It discovers `READY` jobs in MySQL and also runs scheduler checks in the same process.
 - `app/api/routes.py` is the largest mixed-concern module. It handles HTTP concerns, data loading, workflow transitions, and some response shaping directly.
 - The job processor and publish paths are also mixed-concern modules. They combine integration calls, filesystem work, status transitions, and database writes in a single flow.
-- Tenant scoping is partly explicit and partly implicit. The frontend passes `tenant_id` on many requests, while worker and scheduler flows rely on tenant context initialized in `app/context.py`.
+- Tenant scoping is explicit: the Vue app sends `X-Tenant-Id` on tenant-scoped API calls; FastAPI dependencies load that tenant into `app/context.py`. The worker calls `init_context_by_tenant()` / `reset_tenant_context()` around each tenant as it cycles all active tenants (optional `WORKER_TENANT_ID` / `--tenant-id` limits to one). Listing/creating tenants and auth bootstrap omit the header via dedicated routes in `app/api/routes.py`.
 - Tenant configuration is currently stored in database `Tenant.env` JSON and may also be copied into `os.environ`, which makes configuration resolution powerful but hard to reason about.
 - The frontend already has one useful boundary: `frontend/src/services/api.js` is the single client integration layer for backend HTTP calls.
 
@@ -104,7 +104,7 @@ Target state:
 
 - The frontend continues to speak only to the backend HTTP API.
 - `frontend/src/services/api.js` remains the single integration boundary for backend calls.
-- Backend refactors should preserve existing API behavior unless a deliberate API change is being made.
+- Backend refactors should preserve existing API behavior unless a deliberate API change is being made. Tenant-scoped routes now require the `X-Tenant-Id` header and no longer accept redundant `tenant_id` query or body fields for task list/create or schedule-rule create.
 
 ## Responsibility of Each Layer
 
@@ -155,6 +155,7 @@ Target state:
 - Keep the current URLs and request/response contracts where possible.
 - Move route logic toward thin handlers that call application services.
 - Split large route groups gradually by feature or resource when touched, not as a standalone rewrite.
+- Recent example of the intended direction: the AI draft preview/confirm flow keeps new HTTP routes in `app/api/routes.py`, but puts tenant-aware draft generation and atomic draft confirmation behind `app/services/ai_task_draft_service.py` instead of embedding that workflow directly in the route layer.
 
 ### Repositories
 
@@ -223,6 +224,7 @@ Each external system should have one clear adapter boundary and one clear caller
 
 - Current state: sessions are opened from many locations.
 - Target state: application services define transaction boundaries; repositories and persistence helpers perform DB work underneath them.
+- Recent example: AI draft confirmation uses an application-owned workflow plus `task_repo.create_task_with_jobs()` so one reviewed draft task and its jobs can be created in a single transaction.
 
 ### OpenAI Images API
 
@@ -254,7 +256,7 @@ Each external system should have one clear adapter boundary and one clear caller
 - `app/api/routes.py` is still a monolithic route module and will remain so until incrementally split.
 - Direct `Session(engine)` usage exists across routes, worker, scheduler, processors, and publishers.
 - `create_tables()` at runtime is bootstrap behavior, not a migration system.
-- Tenant scoping is not consistently backend-derived; many flows rely on frontend-provided `tenant_id`.
+- Tenant-scoped HTTP handlers derive the active tenant from `X-Tenant-Id` and enforce task/schedule access against `get_tenant().id`; worker/scheduler paths continue to use `app/context.py` without HTTP.
 - `Tenant.env` is both persisted config and runtime config source, and `app/context.py` may copy it into `os.environ`.
 - The worker and scheduler share one polling loop, so slow work can delay scheduled actions.
 - The same job processor can be triggered through HTTP and background execution.

@@ -23,7 +23,10 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 # Database configuration
-DATABASE_URL = "mysql+pymysql://mentor:mentor@localhost:3306/mvpipeline"
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "mysql+pymysql://mentor:mentor@localhost:3306/mvpipeline",
+)
 """MySQL database connection URL."""
 
 # Output directories (created as Path objects, resolved to absolute)
@@ -149,3 +152,16 @@ AUTH_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTH_ACCESS_TOKEN_EXPIRE_MINUT
 
 AUTH_ALGORITHM = "HS256"
 """JWT signing algorithm."""
+
+# AI draft preview configuration
+AI_TASK_DRAFT_API_URL = os.getenv(
+    "AI_TASK_DRAFT_API_URL",
+    "https://api.openai.com/v1/chat/completions",
+)
+"""Endpoint used for text-based task draft preview generation."""
+
+AI_TASK_DRAFT_MODEL = os.getenv("AI_TASK_DRAFT_MODEL", "gpt-4o-mini")
+"""Model identifier for AI draft preview generation."""
+
+AI_TASK_DRAFT_TIMEOUT_SECONDS = int(os.getenv("AI_TASK_DRAFT_TIMEOUT_SECONDS", "30"))
+"""Timeout in seconds for the AI draft preview upstream request."""

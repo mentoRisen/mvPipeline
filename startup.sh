@@ -3,8 +3,8 @@
 # Startup script to launch API, Frontend, and optionally the background worker
 # Linux and Bash only
 # Usage: ./startup.sh [--api|-api] [--gui|-gui] [--worker|-worker] [--tenant-id=UUID] [--foreground|-f]
-# With --worker, pass tenant: ./startup.sh --worker --tenant-id=550e8400-e29b-41d4-a716-446655440000
-# or set WORKER_TENANT_ID in the environment.
+# Worker cycles all active tenants. Optional: ./startup.sh --worker --tenant-id=<UUID> or WORKER_TENANT_ID
+# to limit processing to one tenant (must be active).
 
 set -euo pipefail
 
@@ -18,7 +18,7 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m'
 
-# Worker tenant (from env or --tenant-id=). Required when starting the worker.
+# Optional worker tenant filter (from env or --tenant-id=). When unset, worker handles all active tenants.
 WORKER_TENANT_ID="${WORKER_TENANT_ID:-}"
 
 # Parse command line arguments
@@ -137,20 +137,19 @@ if [ "$START_API" = true ]; then
     fi
 fi
 
-# Start worker (READY jobs in PROCESSING tasks; one worker per tenant)
+# Start worker (READY jobs + scheduler; all active tenants, or one if WORKER_TENANT_ID / --tenant-id set)
 if [ "$START_WORKER" = true ]; then
-    if [ -z "${WORKER_TENANT_ID:-}" ]; then
-        echo -e "${RED}Error: Worker requires a tenant. Set WORKER_TENANT_ID or pass --tenant-id=<UUID>.${NC}"
-        echo -e "${YELLOW}Example: ./startup.sh --worker --tenant-id=550e8400-e29b-41d4-a716-446655440000${NC}"
-        exit 1
-    fi
     if [ "$FOREGROUND" = true ]; then
-        echo -e "${GREEN}Starting worker in foreground for tenant $WORKER_TENANT_ID...${NC}"
+        echo -e "${GREEN}Starting worker in foreground...${NC}"
         cd "$SCRIPT_DIR"
         if [ -d "venv" ]; then
             source venv/bin/activate
         fi
-        echo -e "${BLUE}Worker processes READY jobs and scheduler for tenant $WORKER_TENANT_ID.${NC}"
+        if [ -n "${WORKER_TENANT_ID:-}" ]; then
+            echo -e "${BLUE}Worker limited to tenant $WORKER_TENANT_ID.${NC}"
+        else
+            echo -e "${BLUE}Worker processes all active tenants (jobs + scheduler).${NC}"
+        fi
         echo ""
         echo -e "${YELLOW}Press Ctrl+C to stop${NC}"
         WORKER_TENANT_ID="$WORKER_TENANT_ID" python -m app.worker
@@ -164,7 +163,11 @@ if [ "$START_WORKER" = true ]; then
         ) &
         WORKER_PID=$!
         echo $WORKER_PID > logs/worker.pid
-        echo -e "${GREEN}Worker started for tenant $WORKER_TENANT_ID (PID: $WORKER_PID, logs: logs/worker.log)${NC}"
+        if [ -n "${WORKER_TENANT_ID:-}" ]; then
+            echo -e "${GREEN}Worker started (tenant $WORKER_TENANT_ID, PID: $WORKER_PID, logs: logs/worker.log)${NC}"
+        else
+            echo -e "${GREEN}Worker started (all active tenants, PID: $WORKER_PID, logs: logs/worker.log)${NC}"
+        fi
     fi
 fi
 
@@ -200,7 +203,13 @@ fi
 if [ "$FOREGROUND" = false ]; then
     echo ""
     echo -e "${BLUE}Servers are running in the background.${NC}"
-    [ "$START_WORKER" = true ] && echo -e "${BLUE}Worker runs for tenant $WORKER_TENANT_ID (jobs + scheduler).${NC}"
+    if [ "$START_WORKER" = true ]; then
+        if [ -n "${WORKER_TENANT_ID:-}" ]; then
+            echo -e "${BLUE}Worker runs for tenant $WORKER_TENANT_ID (jobs + scheduler).${NC}"
+        else
+            echo -e "${BLUE}Worker runs for all active tenants (jobs + scheduler).${NC}"
+        fi
+    fi
     echo -e "${YELLOW}Press Ctrl+C to stop all servers${NC}"
     echo -e "${YELLOW}Or run in foreground: ./startup.sh -f --api  or  -f --gui  or  -f --worker${NC}"
     wait

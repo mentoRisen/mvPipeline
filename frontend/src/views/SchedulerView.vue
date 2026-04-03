@@ -311,7 +311,6 @@ export default {
       const times = this.buildTimes(this.newRule.hour, this.newRule.days)
       try {
         const created = await scheduleRuleService.create({
-          tenant_id: this.tenantId,
           action: this.newRule.action,
           note: this.newRule.note || null,
           times,
@@ -550,8 +549,8 @@ export default {
 }
 
 .weekday-checkbox:has(input:checked) {
-  border-color: #667eea;
-  background: #eef2ff;
+  border-color: var(--color-secondary);
+  background: var(--color-surface-alt);
 }
 
 .weekday-label {
@@ -613,8 +612,8 @@ export default {
 }
 
 .modal-content {
-  min-width: 320px;
-  max-width: 90vw;
+  min-width: min(320px, 100%);
+  max-width: 100%;
 }
 
 .modal-content h3 {

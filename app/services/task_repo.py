@@ -145,6 +145,17 @@ def save(task: Task) -> Task:
     return task
 
 
+def create_task_with_jobs(task: Task, jobs: list[Job]) -> Task:
+    """Persist one task and its jobs in a single transaction."""
+    with Session(engine) as session:
+        session.add(task)
+        for job in jobs:
+            session.add(job)
+        session.commit()
+        session.refresh(task)
+    return task
+
+
 def mark_failed(task: Task, error: str) -> Task:
     """Mark a task as failed with an error message.
     

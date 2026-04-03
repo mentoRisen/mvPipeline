@@ -1226,11 +1226,11 @@ export default {
 }
 
 .json-modal {
-  max-width: 800px;
+  max-width: 100%;
 }
 
 .image-modal {
-  max-width: 800px;
+  max-width: 100%;
 }
 
 .image-modal-img {

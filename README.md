@@ -109,7 +109,8 @@ Tokens expire after `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` (default 300). When a tok
 ```bash
 ./startup.sh -f --api
 ./startup.sh -f --gui
-./startup.sh -f --worker --tenant-id=<UUID>
+./startup.sh -f --worker
+# Optional: limit to one tenant — ./startup.sh -f --worker --tenant-id=<UUID>
 ```
 
 **Start only API server:**
@@ -182,15 +183,18 @@ See `frontend/README.md` for more details.
 
 #### Worker
 
-Run one worker per tenant:
+One process cycles all **active** tenants (tenant context is set per tenant each pass). Optional filter:
+
 ```bash
+python -m app.worker
 python -m app.worker --tenant-id=<tenant-uuid>
 ```
 
 Or using the startup script:
 ```bash
-./startup.sh --worker --tenant-id=<tenant-uuid>
-./startup.sh -f --worker --tenant-id=<tenant-uuid>
+./startup.sh --worker
+./startup.sh -f --worker
+# Optional: WORKER_TENANT_ID=... or --tenant-id=<uuid>
 ```
 
 ### Instagram Publishing

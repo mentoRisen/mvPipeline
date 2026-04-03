@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.models.task import TaskStatus
 from app.models.job import JobStatus
@@ -54,7 +54,6 @@ class TaskCreate(BaseModel):
     """Schema for creating a new task."""
     name: str = Field(..., description="Task name/identifier")
     template: str = Field(..., description="Template identifier or name")
-    tenant_id: Optional[UUID] = Field(None, description="Tenant this task belongs to")
     quote_text: Optional[str] = None
     caption_text: Optional[str] = None
     image_generator: Optional[str] = None
@@ -139,6 +138,55 @@ class TaskListResponse(BaseModel):
     offset: int
 
 
+class AiTaskDraftRequest(BaseModel):
+    """Schema for requesting an AI-generated draft preview."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    brief: str = Field(
+        ...,
+        min_length=1,
+        max_length=4000,
+        description="Natural-language brief for generating one draft task",
+    )
+
+
+class AiDraftTask(BaseModel):
+    """Structured draft task returned by the AI preview flow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=255)
+    template: str = Field(..., description="Template identifier for the draft task")
+    meta: dict = Field(default_factory=dict)
+    post: dict = Field(default_factory=dict)
+
+
+class AiDraftJob(BaseModel):
+    """Structured draft job returned by the AI preview flow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generator: str = Field(..., min_length=1, max_length=255)
+    purpose: Optional[str] = Field(default=None, max_length=255)
+    prompt: dict = Field(default_factory=dict)
+    order: int = Field(default=0, ge=0)
+
+
+class AiTaskDraftResponse(BaseModel):
+    """Preview payload for the AI draft flow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task: AiDraftTask
+    jobs: list[AiDraftJob] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AiTaskDraftConfirmRequest(AiTaskDraftResponse):
+    """Reviewed draft payload used for atomic task/job creation."""
+
+
 class ApprovalAction(BaseModel):
     """Schema for approval actions."""
     task_id: UUID = Field(..., description="ID of the task to approve")
@@ -201,7 +249,7 @@ class TokenResponse(BaseModel):
 
 class ScheduleRuleCreate(BaseModel):
     """Schema for creating a schedule rule."""
-    tenant_id: UUID = Field(..., description="Tenant this rule belongs to")
+
     action: str = Field(..., description="Action to perform (e.g. publish, remind)")
     note: Optional[str] = Field(default=None, description="Optional note / description")
     times: Optional[dict] = Field(

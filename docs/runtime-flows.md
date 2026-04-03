@@ -27,7 +27,7 @@ This document describes the runtime behavior that is actually wired in the curre
 - Integration touchpoints:
   none directly; tenant `env` JSON is stored for later Instagram/public URL usage.
 - Notable risks or inconsistencies:
-  tenant selection is a frontend concern; the backend does not derive current tenant from auth context for API requests. Different API calls only become tenant-scoped when the frontend includes `tenant_id`.
+  tenant selection remains client-driven, but tenant-scoped API routes require the `X-Tenant-Id` header (see `app/api/tenant_deps.py`). The client sets it from `tenantStore` in `frontend/src/services/api.js` for all calls except a small bootstrap set (login, session refresh, listing/creating tenants). Bootstrap routes live on `bootstrap_router` in `app/api/routes.py`; everything else uses `scoped_router`, which runs `tenant_context_dependency` and loads `app.context`.
 
 ### Task List, Detail, Create, Update, And Delete
 
@@ -37,14 +37,16 @@ This document describes the runtime behavior that is actually wired in the curre
   `TaskList.loadTasks()` -> `taskService.getTasks()` -> `GET /api/v1/tasks` in `app/api/routes.py` -> `task_repo.list_all_tasks()` or `list_tasks_by_status()`.
   `TaskDetail.loadTask()` -> `taskService.getTask()` -> `GET /api/v1/tasks/{id}` -> `task_repo.get_task_by_id()` plus inline `Job` query in `app/api/routes.py`.
   Create flow: `TaskList.vue` -> `taskService.createTask()` -> `POST /api/v1/tasks` -> template hydration in `app/api/routes.py` -> `task_repo.save()`.
+  AI create flow: `TaskList.vue` -> `AiTaskDraftModal.vue` -> `taskService.previewAiTaskDraft()` -> `POST /api/v1/tasks/ai-draft-preview` in `app/api/routes.py` -> `app/services/ai_task_draft_service.py` -> `app/services/integrations/llm_text_adapter.py`.
+  AI confirm flow: `AiTaskDraftModal.vue` -> `taskService.confirmAiTaskDraft()` -> `POST /api/v1/tasks/ai-draft-confirm` -> `app/services/ai_task_draft_service.py` -> `task_repo.create_task_with_jobs()`.
   Update flow: `TaskDetail.vue` -> `taskService.updateTask()` -> `PUT /api/v1/tasks/{id}` -> `task_repo.save()`.
   Delete flow: `TaskDetail.vue` -> `taskService.deleteTask()` -> `DELETE /api/v1/tasks/{id}` -> inline job deletion + task deletion in `app/api/routes.py`.
 - Persistence touchpoints:
-  tasks and jobs are stored in MySQL. Create/update/delete happens through a mix of repository functions and direct `Session(engine)` blocks in `app/api/routes.py`.
+  tasks and jobs are stored in MySQL. Create/update/delete happens through a mix of repository functions and direct `Session(engine)` blocks in `app/api/routes.py`. AI preview does not write to MySQL; AI confirm creates one task plus its jobs through a shared backend workflow and one transaction boundary.
 - Integration touchpoints:
-  none for plain list/detail/create/update/delete.
+  AI preview calls an external text-LLM adapter with an allowlisted subset of tenant context. Plain list/detail/create/update/delete have no external integration.
 - Notable risks or inconsistencies:
-  the home route uses local component state for selected task rather than the `/tasks/:id` route, so deep linking and in-app selection use different UI shells. The route layer mixes HTTP handling, template shaping, and direct DB access in one file.
+  the home route uses local component state for selected task rather than the `/tasks/:id` route, so deep linking and in-app selection use different UI shells. The route layer still mixes HTTP handling, template shaping, and direct DB access in one file, although the AI draft preview/confirm path now moves multi-step draft logic into `app/services/ai_task_draft_service.py`. Slice 1 AI drafts remain browser-memory only until the user confirms or closes the modal.
 
 ### Job CRUD And Manual Job Processing
 
@@ -77,16 +79,16 @@ This document describes the runtime behavior that is actually wired in the curre
 
 ### Tenant Worker Loop
 
-- Trigger: `python -m app.worker` or `startup.sh --worker --tenant-id=<UUID>`.
+- Trigger: `python -m app.worker` or `startup.sh --worker` (optional `--tenant-id=<UUID>` or `WORKER_TENANT_ID` to scope one tenant).
 - Sequence of layers/components:
-  `app/worker.py` resolves tenant id -> `tenant_repo.get_tenant_by_id()` -> `init_context_by_tenant()` in `app/context.py` -> `run_worker()`.
+  `app/worker.py` loads active tenants via `tenant_repo.list_active_tenants()` (or a single tenant if filtered) -> for each tenant, `init_context_by_tenant()` then job poll / optional `run_scheduler()` -> `reset_tenant_context()` after each full pass.
   The loop polls one `READY` job whose parent task is `PROCESSING` and belongs to the current tenant, then calls `app/services/jobs/processor.py`.
 - Persistence touchpoints:
   worker reads and writes MySQL through `SQLModel` sessions; it also calls `create_tables()` on startup.
 - Integration touchpoints:
   none at the worker-loop level; downstream job processing and scheduler paths do the real external work.
 - Notable risks or inconsistencies:
-  there is no queue; work discovery is DB polling only. One worker is expected per tenant. Scheduler execution shares the same loop, so a slow job can delay scheduled actions.
+  there is no queue; work discovery is DB polling only. One worker process visits tenants sequentially each cycle. Scheduler execution shares the same loop, so a slow job or many tenants can delay scheduled actions for later tenants in the same pass.
 
 ### Image Job Processing
 

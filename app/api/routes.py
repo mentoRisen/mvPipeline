@@ -16,6 +16,9 @@ from app.models.job import Job, JobStatus
 from app.models.tenant import Tenant
 from app.models.schedule_rule import ScheduleRule
 from app.api.schemas import (
+    AiTaskDraftConfirmRequest,
+    AiTaskDraftRequest,
+    AiTaskDraftResponse,
     TaskCreate,
     TaskUpdate,
     TaskResponse,
@@ -34,15 +37,33 @@ from app.db.engine import engine
 import app.services.task_repo as task_repo
 import app.services.tenant_repo as tenant_repo
 import app.services.schedule_rule_repo as schedule_rule_repo
+from app.services.ai_task_draft_service import (
+    AiTaskDraftService,
+    AiTaskDraftValidationError,
+    TextDraftRefusalError,
+    TextDraftUpstreamError,
+)
+from app.services.integrations.llm_text_adapter import OpenAITextDraftAdapter
 from app.template.base import Template
 from app.template.instagram_post import InstagramPost
 from app.services.jobs.processor import process_job as process_job_service
 from app.services import auth as auth_service
+from app.api.tenant_deps import tenant_context_dependency
+from app.context import get_tenant as current_tenant
 
-router = APIRouter(
+bootstrap_router = APIRouter(
+    prefix="/api/v1",
+    tags=["tenants"],
+    dependencies=[Depends(auth_service.get_current_active_user)],
+)
+
+scoped_router = APIRouter(
     prefix="/api/v1",
     tags=["tasks"],
-    dependencies=[Depends(auth_service.get_current_active_user)],
+    dependencies=[
+        Depends(auth_service.get_current_active_user),
+        Depends(tenant_context_dependency),
+    ],
 )
 
 
@@ -69,16 +90,47 @@ def get_template_instance(template_name: str) -> Template:
     return template_class()
 
 
+def _task_for_current_tenant_or_404(task_id: UUID, tenant: Tenant) -> Task:
+    task = task_repo.get_task_by_id(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    if task.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    return task
+
+
+def _ensure_tenant_path_matches(tenant_uuid: UUID, tenant: Tenant) -> None:
+    if tenant_uuid != tenant.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Requested tenant does not match X-Tenant-Id",
+        )
+
+
+def _schedule_rule_for_current_tenant_or_404(rule_id: UUID, tenant: Tenant) -> ScheduleRule:
+    rule = schedule_rule_repo.get_schedule_rule_by_id(rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail=f"Schedule rule {rule_id} not found")
+    if rule.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail=f"Schedule rule {rule_id} not found")
+    return rule
+
+
 def get_db_session():
     """Dependency to get database session."""
     with Session(engine) as session:
         yield session
 
 
+def get_ai_task_draft_service() -> AiTaskDraftService:
+    """Build the shared AI draft preview service."""
+    return AiTaskDraftService(OpenAITextDraftAdapter())
+
+
 # --- Tenant routes ---
 
 
-@router.get("/tenants", response_model=list[TenantResponse])
+@bootstrap_router.get("/tenants", response_model=list[TenantResponse])
 def list_tenants(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -88,7 +140,7 @@ def list_tenants(
     return [TenantResponse.model_validate(t) for t in tenants]
 
 
-@router.get("/tenants/default", response_model=TenantResponse)
+@bootstrap_router.get("/tenants/default", response_model=TenantResponse)
 def get_default_tenant():
     """Get the default tenant (DEFAULT_TENANT_ID or first tenant)."""
     tenant = tenant_repo.get_default_tenant()
@@ -97,16 +149,20 @@ def get_default_tenant():
     return TenantResponse.model_validate(tenant)
 
 
-@router.get("/tenants/{tenant_uuid}", response_model=TenantResponse)
-def get_tenant(tenant_uuid: UUID):
+@scoped_router.get("/tenants/{tenant_uuid}", response_model=TenantResponse)
+def get_tenant_detail(
+    tenant_uuid: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Get a tenant by UUID."""
+    _ensure_tenant_path_matches(tenant_uuid, tenant)
     tenant = tenant_repo.get_tenant_by_id(tenant_uuid)
     if not tenant:
         raise HTTPException(status_code=404, detail=f"Tenant {tenant_uuid} not found")
     return TenantResponse.model_validate(tenant)
 
 
-@router.post("/tenants", response_model=TenantResponse, status_code=201)
+@bootstrap_router.post("/tenants", response_model=TenantResponse, status_code=201)
 def create_tenant_route(data: TenantCreate):
     """Create a new tenant."""
     try:
@@ -123,72 +179,83 @@ def create_tenant_route(data: TenantCreate):
         raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
 
 
-@router.put("/tenants/{tenant_uuid}", response_model=TenantResponse)
-def update_tenant(tenant_uuid: UUID, data: TenantUpdate):
+@scoped_router.put("/tenants/{tenant_uuid}", response_model=TenantResponse)
+def update_tenant(
+    tenant_uuid: UUID,
+    data: TenantUpdate,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Update a tenant."""
-    tenant = tenant_repo.get_tenant_by_id(tenant_uuid)
-    if not tenant:
+    _ensure_tenant_path_matches(tenant_uuid, tenant)
+    tenant_record = tenant_repo.get_tenant_by_id(tenant_uuid)
+    if not tenant_record:
         raise HTTPException(status_code=404, detail=f"Tenant {tenant_uuid} not found")
     if data.name is not None:
-        tenant.name = data.name
+        tenant_record.name = data.name
     if data.description is not None:
-        tenant.description = data.description
+        tenant_record.description = data.description
     if data.instagram_account is not None:
-        tenant.instagram_account = data.instagram_account
+        tenant_record.instagram_account = data.instagram_account
     if data.facebook_page is not None:
-        tenant.facebook_page = data.facebook_page
+        tenant_record.facebook_page = data.facebook_page
     if data.is_active is not None:
-        tenant.is_active = data.is_active
+        tenant_record.is_active = data.is_active
     if data.env is not None:
-        tenant.env = data.env
-    tenant = tenant_repo.save_tenant(tenant)
-    return TenantResponse.model_validate(tenant)
+        tenant_record.env = data.env
+    tenant_record = tenant_repo.save_tenant(tenant_record)
+    return TenantResponse.model_validate(tenant_record)
 
 
-@router.delete("/tenants/{tenant_uuid}", status_code=204)
-def delete_tenant_route(tenant_uuid: UUID):
+@scoped_router.delete("/tenants/{tenant_uuid}", status_code=204)
+def delete_tenant_route(
+    tenant_uuid: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Delete a tenant. Tasks with this tenant will have tenant_id set to NULL."""
-    tenant = tenant_repo.get_tenant_by_id(tenant_uuid)
-    if not tenant:
+    _ensure_tenant_path_matches(tenant_uuid, tenant)
+    tenant_record = tenant_repo.get_tenant_by_id(tenant_uuid)
+    if not tenant_record:
         raise HTTPException(status_code=404, detail=f"Tenant {tenant_uuid} not found")
-    tenant_repo.delete_tenant(tenant)
+    tenant_repo.delete_tenant(tenant_record)
     return None
 
 
 # --- ScheduleRule routes ---
 
 
-@router.get("/tenants/{tenant_uuid}/schedule-rules", response_model=list[ScheduleRuleResponse])
+@scoped_router.get("/tenants/{tenant_uuid}/schedule-rules", response_model=list[ScheduleRuleResponse])
 def list_schedule_rules(
     tenant_uuid: UUID,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    tenant: Tenant = Depends(tenant_context_dependency),
 ):
     """List schedule rules for a tenant."""
-    if not tenant_repo.get_tenant_by_id(tenant_uuid):
-        raise HTTPException(status_code=404, detail=f"Tenant {tenant_uuid} not found")
+    _ensure_tenant_path_matches(tenant_uuid, tenant)
     rules = schedule_rule_repo.list_schedule_rules_by_tenant(
         tenant_id=tenant_uuid, limit=limit, offset=offset
     )
     return [ScheduleRuleResponse.model_validate(r) for r in rules]
 
 
-@router.get("/schedule-rules/{rule_id}", response_model=ScheduleRuleResponse)
-def get_schedule_rule(rule_id: UUID):
+@scoped_router.get("/schedule-rules/{rule_id}", response_model=ScheduleRuleResponse)
+def get_schedule_rule(
+    rule_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Get a schedule rule by ID."""
-    rule = schedule_rule_repo.get_schedule_rule_by_id(rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail=f"Schedule rule {rule_id} not found")
+    rule = _schedule_rule_for_current_tenant_or_404(rule_id, tenant)
     return ScheduleRuleResponse.model_validate(rule)
 
 
-@router.post("/schedule-rules", response_model=ScheduleRuleResponse, status_code=201)
-def create_schedule_rule_route(data: ScheduleRuleCreate):
+@scoped_router.post("/schedule-rules", response_model=ScheduleRuleResponse, status_code=201)
+def create_schedule_rule_route(
+    data: ScheduleRuleCreate,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Create a new schedule rule."""
-    if not tenant_repo.get_tenant_by_id(data.tenant_id):
-        raise HTTPException(status_code=404, detail=f"Tenant {data.tenant_id} not found")
     rule = schedule_rule_repo.create_schedule_rule(
-        tenant_id=data.tenant_id,
+        tenant_id=tenant.id,
         action=data.action,
         note=data.note,
         times=data.times,
@@ -196,12 +263,14 @@ def create_schedule_rule_route(data: ScheduleRuleCreate):
     return ScheduleRuleResponse.model_validate(rule)
 
 
-@router.put("/schedule-rules/{rule_id}", response_model=ScheduleRuleResponse)
-def update_schedule_rule_route(rule_id: UUID, data: ScheduleRuleUpdate):
+@scoped_router.put("/schedule-rules/{rule_id}", response_model=ScheduleRuleResponse)
+def update_schedule_rule_route(
+    rule_id: UUID,
+    data: ScheduleRuleUpdate,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Update a schedule rule."""
-    rule = schedule_rule_repo.get_schedule_rule_by_id(rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail=f"Schedule rule {rule_id} not found")
+    rule = _schedule_rule_for_current_tenant_or_404(rule_id, tenant)
     if data.action is not None:
         rule.action = data.action
     if data.note is not None:
@@ -212,12 +281,13 @@ def update_schedule_rule_route(rule_id: UUID, data: ScheduleRuleUpdate):
     return ScheduleRuleResponse.model_validate(rule)
 
 
-@router.delete("/schedule-rules/{rule_id}", status_code=204)
-def delete_schedule_rule_route(rule_id: UUID):
+@scoped_router.delete("/schedule-rules/{rule_id}", status_code=204)
+def delete_schedule_rule_route(
+    rule_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Delete a schedule rule."""
-    rule = schedule_rule_repo.get_schedule_rule_by_id(rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail=f"Schedule rule {rule_id} not found")
+    rule = _schedule_rule_for_current_tenant_or_404(rule_id, tenant)
     schedule_rule_repo.delete_schedule_rule(rule)
     return None
 
@@ -225,36 +295,59 @@ def delete_schedule_rule_route(rule_id: UUID):
 # --- Task routes ---
 
 
-@router.get("/tasks", response_model=TaskListResponse)
+@scoped_router.post("/tasks/ai-draft-preview", response_model=AiTaskDraftResponse)
+def create_ai_task_draft_preview(
+    data: AiTaskDraftRequest,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
+    """Return one tenant-aware AI draft preview without persisting records."""
+    service = get_ai_task_draft_service()
+    try:
+        return service.generate_preview(brief=data.brief, tenant=tenant)
+    except TextDraftRefusalError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AiTaskDraftValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TextDraftUpstreamError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@scoped_router.post("/tasks/ai-draft-confirm", response_model=TaskResponse, status_code=201)
+def confirm_ai_task_draft(
+    data: AiTaskDraftConfirmRequest,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
+    """Persist one reviewed AI draft as a real task plus jobs."""
+    service = get_ai_task_draft_service()
+    try:
+        task = service.confirm_preview(draft=data, tenant=tenant)
+        return TaskResponse.model_validate(task)
+    except AiTaskDraftValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (IntegrityError, SQLAlchemyError) as exc:
+        raise HTTPException(status_code=500, detail="Failed to persist reviewed draft") from exc
+
+
+@scoped_router.get("/tasks", response_model=TaskListResponse)
 def list_tasks(
     limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of tasks to return"),
     offset: int = Query(default=0, ge=0, description="Number of tasks to skip"),
     status: Optional[TaskStatus] = Query(default=None, description="Filter by task status"),
-    tenant_id: Optional[UUID] = Query(default=None, description="Filter by tenant ID"),
+    tenant: Tenant = Depends(tenant_context_dependency),
 ):
-    """List all tasks with optional status/tenant filtering and pagination.
-    
-    Args:
-        limit: Maximum number of tasks to return (1-1000)
-        offset: Number of tasks to skip
-        status: Optional status filter
-        tenant_id: Optional tenant filter
-        
-    Returns:
-        Paginated list of tasks
-    """
+    """List all tasks with optional status filtering and pagination (scoped to X-Tenant-Id)."""
+    tenant_id = tenant.id
     with Session(engine) as session:
         if status:
             tasks = task_repo.list_tasks_by_status(status, limit=limit, tenant_id=tenant_id)
-            statement = select(Task).where(Task.status == status)
-            if tenant_id is not None:
-                statement = statement.where(Task.tenant_id == tenant_id)
+            statement = select(Task).where(
+                Task.status == status,
+                Task.tenant_id == tenant_id,
+            )
             total = len(list(session.exec(statement).all()))
         else:
             tasks = task_repo.list_all_tasks(limit=limit, offset=offset, tenant_id=tenant_id)
-            statement = select(Task)
-            if tenant_id is not None:
-                statement = statement.where(Task.tenant_id == tenant_id)
+            statement = select(Task).where(Task.tenant_id == tenant_id)
             total = len(list(session.exec(statement).all()))
         
         return TaskListResponse(
@@ -265,8 +358,11 @@ def list_tasks(
         )
 
 
-@router.get("/tasks/{task_id}", response_model=TaskResponse)
-def get_task(task_id: UUID):
+@scoped_router.get("/tasks/{task_id}", response_model=TaskResponse)
+def get_task(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Get a specific task by ID.
     
     Args:
@@ -278,9 +374,7 @@ def get_task(task_id: UUID):
     Raises:
         HTTPException: 404 if task not found
     """
-    task = task_repo.get_task_by_id(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    task = _task_for_current_tenant_or_404(task_id, tenant)
     
     # Load jobs for this task ordered by custom order (descending), then by creation time (oldest first)
     with Session(engine) as session:
@@ -297,8 +391,11 @@ def get_task(task_id: UUID):
     return TaskResponse(**task_dict)
 
 
-@router.post("/tasks", response_model=TaskResponse, status_code=201)
-def create_task(task_data: TaskCreate):
+@scoped_router.post("/tasks", response_model=TaskResponse, status_code=201)
+def create_task(
+    task_data: TaskCreate,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Create a new task.
     
     Args:
@@ -316,8 +413,7 @@ def create_task(task_data: TaskCreate):
         # Set required fields
         task.name = task_data.name
         task.template = task_data.template
-        if task_data.tenant_id is not None:
-            task.tenant_id = task_data.tenant_id
+        task.tenant_id = tenant.id
         
         # Get template instance and populate meta and post from template
         template_instance = get_template_instance(task_data.template)
@@ -374,8 +470,12 @@ def create_task(task_data: TaskCreate):
         raise HTTPException(status_code=500, detail=f"Unexpected error creating task: {str(e)}")
 
 
-@router.put("/tasks/{task_id}", response_model=TaskResponse)
-def update_task(task_id: UUID, task_data: TaskUpdate):
+@scoped_router.put("/tasks/{task_id}", response_model=TaskResponse)
+def update_task(
+    task_id: UUID,
+    task_data: TaskUpdate,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Update an existing task.
     
     Args:
@@ -388,9 +488,7 @@ def update_task(task_id: UUID, task_data: TaskUpdate):
     Raises:
         HTTPException: 404 if task not found
     """
-    task = task_repo.get_task_by_id(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    task = _task_for_current_tenant_or_404(task_id, tenant)
     
     # Update fields if provided
     if task_data.name is not None:
@@ -406,8 +504,11 @@ def update_task(task_id: UUID, task_data: TaskUpdate):
     return TaskResponse.model_validate(task)
 
 
-@router.delete("/tasks/{task_id}", status_code=204)
-def delete_task(task_id: UUID):
+@scoped_router.delete("/tasks/{task_id}", status_code=204)
+def delete_task(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Delete a task.
     
     Deletes all associated jobs first, then deletes the task.
@@ -418,11 +519,12 @@ def delete_task(task_id: UUID):
     Raises:
         HTTPException: 404 if task not found
     """
-    task = task_repo.get_task_by_id(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    _task_for_current_tenant_or_404(task_id, tenant)
     
     with Session(engine) as session:
+        task = session.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         # First, delete all jobs associated with this task
         statement = select(Job).where(Job.task_id == task_id)
         jobs = list(session.exec(statement).all())
@@ -436,8 +538,11 @@ def delete_task(task_id: UUID):
     return None
 
 
-@router.post("/tasks/{task_id}/submit", response_model=TaskResponse)
-def submit_task_for_approval(task_id: UUID):
+@scoped_router.post("/tasks/{task_id}/submit", response_model=TaskResponse)
+def submit_task_for_approval(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Submit a draft task for approval.
     
     Moves task from DRAFT to PENDING_APPROVAL.
@@ -451,6 +556,7 @@ def submit_task_for_approval(task_id: UUID):
     Raises:
         HTTPException: 404 if task not found, 400 if invalid status transition
     """
+    _task_for_current_tenant_or_404(task_id, tenant)
     try:
         task = task_repo.submit_task_for_approval(task_id)
         return TaskResponse.model_validate(task)
@@ -458,8 +564,11 @@ def submit_task_for_approval(task_id: UUID):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/tasks/{task_id}/approve-processing", response_model=TaskResponse)
-def approve_task_for_processing(task_id: UUID):
+@scoped_router.post("/tasks/{task_id}/approve-processing", response_model=TaskResponse)
+def approve_task_for_processing(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Approve a task for processing.
     
     Moves task from PENDING_APPROVAL to PROCESSING.
@@ -473,6 +582,7 @@ def approve_task_for_processing(task_id: UUID):
     Raises:
         HTTPException: 404 if task not found, 400 if invalid status transition
     """
+    _task_for_current_tenant_or_404(task_id, tenant)
     try:
         task = task_repo.approve_task_for_processing(task_id)
         return TaskResponse.model_validate(task)
@@ -480,8 +590,11 @@ def approve_task_for_processing(task_id: UUID):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/tasks/{task_id}/disapprove", response_model=TaskResponse)
-def disapprove_task(task_id: UUID):
+@scoped_router.post("/tasks/{task_id}/disapprove", response_model=TaskResponse)
+def disapprove_task(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Disapprove a task from processing.
     
     Moves task from PENDING_APPROVAL to DISAPPROVED.
@@ -495,6 +608,7 @@ def disapprove_task(task_id: UUID):
     Raises:
         HTTPException: 404 if task not found, 400 if invalid status transition
     """
+    _task_for_current_tenant_or_404(task_id, tenant)
     try:
         task = task_repo.disapprove_task(task_id)
         return TaskResponse.model_validate(task)
@@ -502,8 +616,11 @@ def disapprove_task(task_id: UUID):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/tasks/{task_id}/approve-publication", response_model=TaskResponse)
-def approve_task_for_publication(task_id: UUID):
+@scoped_router.post("/tasks/{task_id}/approve-publication", response_model=TaskResponse)
+def approve_task_for_publication(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Approve a task for publication.
     
     Moves task from PENDING_CONFIRMATION to READY.
@@ -517,6 +634,7 @@ def approve_task_for_publication(task_id: UUID):
     Raises:
         HTTPException: 404 if task not found, 400 if invalid status transition
     """
+    _task_for_current_tenant_or_404(task_id, tenant)
     try:
         task = task_repo.approve_task_for_publication(task_id)
         return TaskResponse.model_validate(task)
@@ -524,8 +642,11 @@ def approve_task_for_publication(task_id: UUID):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/tasks/{task_id}/publish", response_model=TaskResponse)
-def publish_task(task_id: UUID):
+@scoped_router.post("/tasks/{task_id}/publish", response_model=TaskResponse)
+def publish_task(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Publish a task.
     
     Publishes task using the publisher service. Can be called from READY, PUBLISHING, or FAILED status.
@@ -541,9 +662,7 @@ def publish_task(task_id: UUID):
         HTTPException: 404 if task not found, 400 if invalid status or publishing fails
     """
     # Get task
-    task = task_repo.get_task_by_id(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    task = _task_for_current_tenant_or_404(task_id, tenant)
     
     # Check if task is in a valid state for publishing
     if task.status not in (TaskStatus.READY, TaskStatus.PUBLISHING, TaskStatus.FAILED):
@@ -558,7 +677,7 @@ def publish_task(task_id: UUID):
         publish_task_service(task)
         
         # Reload task to get updated status
-        task = task_repo.get_task_by_id(task_id)
+        task = _task_for_current_tenant_or_404(task_id, tenant)
         return TaskResponse.model_validate(task)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -566,8 +685,11 @@ def publish_task(task_id: UUID):
         raise HTTPException(status_code=500, detail=f"Failed to publish task: {str(e)}")
 
 
-@router.post("/tasks/{task_id}/reject", response_model=TaskResponse)
-def reject_task(task_id: UUID):
+@scoped_router.post("/tasks/{task_id}/reject", response_model=TaskResponse)
+def reject_task(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Reject a task from publication.
     
     Moves task from PENDING_CONFIRMATION to REJECTED.
@@ -581,6 +703,7 @@ def reject_task(task_id: UUID):
     Raises:
         HTTPException: 404 if task not found, 400 if invalid status transition
     """
+    _task_for_current_tenant_or_404(task_id, tenant)
     try:
         task = task_repo.reject_task(task_id)
         return TaskResponse.model_validate(task)
@@ -588,8 +711,11 @@ def reject_task(task_id: UUID):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/tasks/{task_id}/override-processing", response_model=TaskResponse)
-def override_task_processing(task_id: UUID):
+@scoped_router.post("/tasks/{task_id}/override-processing", response_model=TaskResponse)
+def override_task_processing(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Override processing and move task to PENDING_CONFIRMATION.
     
     Moves task from PROCESSING to PENDING_CONFIRMATION regardless of generator state.
@@ -603,6 +729,7 @@ def override_task_processing(task_id: UUID):
     Raises:
         HTTPException: 404 if task not found, 400 if invalid status transition
     """
+    _task_for_current_tenant_or_404(task_id, tenant)
     try:
         task = task_repo.override_task_processing(task_id)
         return TaskResponse.model_validate(task)
@@ -610,28 +737,21 @@ def override_task_processing(task_id: UUID):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/tasks/status/{status}", response_model=TaskListResponse)
+@scoped_router.get("/tasks/status/{status}", response_model=TaskListResponse)
 def list_tasks_by_status_route(
     status: TaskStatus,
     limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of tasks to return"),
-    tenant_id: Optional[UUID] = Query(default=None, description="Filter by tenant ID"),
+    tenant: Tenant = Depends(tenant_context_dependency),
 ):
-    """List tasks filtered by status.
-    
-    Args:
-        status: Task status to filter by
-        limit: Maximum number of tasks to return
-        tenant_id: Optional tenant filter
-        
-    Returns:
-        List of tasks with the specified status
-    """
+    """List tasks filtered by status (scoped to X-Tenant-Id)."""
+    tenant_id = tenant.id
     tasks = task_repo.list_tasks_by_status(status, limit=limit, tenant_id=tenant_id)
     
     with Session(engine) as session:
-        statement = select(Task).where(Task.status == status)
-        if tenant_id is not None:
-            statement = statement.where(Task.tenant_id == tenant_id)
+        statement = select(Task).where(
+            Task.status == status,
+            Task.tenant_id == tenant_id,
+        )
         total = len(list(session.exec(statement).all()))
     
     return TaskListResponse(
@@ -642,8 +762,12 @@ def list_tasks_by_status_route(
     )
 
 
-@router.post("/tasks/{task_id}/jobs", response_model=JobResponse, status_code=201)
-def create_job(task_id: UUID, job_data: JobCreate):
+@scoped_router.post("/tasks/{task_id}/jobs", response_model=JobResponse, status_code=201)
+def create_job(
+    task_id: UUID,
+    job_data: JobCreate,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Create a new job for a task.
     
     Args:
@@ -659,11 +783,8 @@ def create_job(task_id: UUID, job_data: JobCreate):
     logger.info(f"[create_job] Creating job for task {task_id}")
     logger.debug(f"[create_job] Job data: generator={job_data.generator}, purpose={job_data.purpose}, prompt={job_data.prompt}")
     
-    # Verify task exists
-    task = task_repo.get_task_by_id(task_id)
-    if not task:
-        logger.warning(f"[create_job] Task {task_id} not found")
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    # Verify task exists and belongs to current tenant
+    _task_for_current_tenant_or_404(task_id, tenant)
     
     logger.info(f"[create_job] Task {task_id} found, creating job")
     
@@ -704,8 +825,13 @@ def create_job(task_id: UUID, job_data: JobCreate):
         raise HTTPException(status_code=500, detail=f"Unexpected error creating job: {str(e)}")
 
 
-@router.put("/tasks/{task_id}/jobs/{job_id}", response_model=JobResponse)
-def update_job(task_id: UUID, job_id: UUID, job_data: JobUpdate):
+@scoped_router.put("/tasks/{task_id}/jobs/{job_id}", response_model=JobResponse)
+def update_job(
+    task_id: UUID,
+    job_id: UUID,
+    job_data: JobUpdate,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Update an existing job.
     
     Args:
@@ -719,10 +845,7 @@ def update_job(task_id: UUID, job_id: UUID, job_data: JobUpdate):
     Raises:
         HTTPException: 404 if task or job not found, 400 if validation or database error occurs
     """
-    # Verify task exists
-    task = task_repo.get_task_by_id(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    _task_for_current_tenant_or_404(task_id, tenant)
     
     try:
         # Get job
@@ -766,8 +889,12 @@ def update_job(task_id: UUID, job_id: UUID, job_data: JobUpdate):
         raise HTTPException(status_code=500, detail=f"Unexpected error updating job: {str(e)}")
 
 
-@router.delete("/tasks/{task_id}/jobs/{job_id}", status_code=204)
-def delete_job(task_id: UUID, job_id: UUID):
+@scoped_router.delete("/tasks/{task_id}/jobs/{job_id}", status_code=204)
+def delete_job(
+    task_id: UUID,
+    job_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Delete a job.
     
     Args:
@@ -777,10 +904,7 @@ def delete_job(task_id: UUID, job_id: UUID):
     Raises:
         HTTPException: 404 if task or job not found, 400 if database error occurs
     """
-    # Verify task exists
-    task = task_repo.get_task_by_id(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    _task_for_current_tenant_or_404(task_id, tenant)
     
     try:
         # Get and delete job
@@ -803,8 +927,12 @@ def delete_job(task_id: UUID, job_id: UUID):
         raise HTTPException(status_code=500, detail=f"Unexpected error deleting job: {str(e)}")
 
 
-@router.post("/tasks/{task_id}/jobs/{job_id}/process", response_model=JobResponse)
-def process_job(task_id: UUID, job_id: UUID):
+@scoped_router.post("/tasks/{task_id}/jobs/{job_id}/process", response_model=JobResponse)
+def process_job(
+    task_id: UUID,
+    job_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
     """Process a job using the appropriate generator.
     
     Args:
@@ -817,10 +945,7 @@ def process_job(task_id: UUID, job_id: UUID):
     Raises:
         HTTPException: 404 if task or job not found, 400/500 on processing errors
     """
-    # Verify task exists
-    task = task_repo.get_task_by_id(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    _task_for_current_tenant_or_404(task_id, tenant)
     
     # Get job
     with Session(engine) as session:
@@ -857,7 +982,7 @@ def process_job(task_id: UUID, job_id: UUID):
         )
 
 
-@router.get("/templates/{template_name}")
+@scoped_router.get("/templates/{template_name}")
 def get_template(template_name: str):
     """Get template JSON structure for creating a task.
     

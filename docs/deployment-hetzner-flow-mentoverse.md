@@ -1,26 +1,31 @@
 # Deployment Plan (Hetzner Ubuntu) for flow.mentoverse.eu
 
-This runbook deploys mvPipeline to a single Hetzner VPS with:
+This runbook deploys mvPipeline to a single Hetzner VPS as a **long-running development environment**: the stack keeps running after you disconnect SSH or Cursor, and the **Vue UI is served by Vite** (hot reload) behind Nginx, not from a rebuilt `dist/` on every edit.
 
-- Nginx as reverse proxy and static frontend host
+Includes:
+
+- Nginx as TLS terminator and reverse proxy (Vite dev server + API + static output)
+- **Vite dev server** on `127.0.0.1:3000` as a **systemd service** (`mvpipeline-frontend-dev`) so the frontend survives logout and reboot
 - FastAPI backend as a systemd service
 - Tenant worker as a systemd service (one worker instance)
 - MySQL on the same VPS
 - TLS certificate from Let's Encrypt
-- Non-root SSH user for Cursor-based live development
+- Non-root SSH user for Cursor-based live editing
 
-It is written for Ubuntu 24.04 LTS and domain `flow.mentoverse.eu`.
+Written for Ubuntu 24.04 LTS and domain `flow.mentoverse.eu`.
 
-This server is treated as a long-running development instance (not immutable-only production), so the setup below keeps app code owned by a non-root user and allows safe SSH editing/deployment loops from Cursor.
+Code under `/opt/mvPipeline` stays owned by `deployer`. You edit in place; **backend** changes need an API/worker restart; **frontend** changes are picked up by Vite without `npm run build` or rsync.
 
 ## 1) Target Topology
 
 - Public URL: `https://flow.mentoverse.eu`
-- Frontend: built Vue app served by Nginx from `/var/www/flow.mentoverse.eu/frontend-dist`
-- API: Uvicorn on `127.0.0.1:8000`
-- Worker: background process `python -m app.worker` with `WORKER_TENANT_ID`
-- Database: local MySQL (`mvpipeline` database)
-- Generated files: repo `output/` served via Nginx under `/output/`
+- **Frontend:** Vite (`npm run dev`) on `127.0.0.1:3000`, proxied by Nginx with WebSocket upgrade for HMR
+- **API:** Uvicorn on `127.0.0.1:8000`, proxied at `/api/`
+- **Worker:** `python -m app.worker` (all active tenants; optional `WORKER_TENANT_ID` to scope one)
+- **Database:** local MySQL (`mvpipeline` database)
+- **Generated files:** repo `output/` served by Nginx under `/output/`
+
+Optional later: you can still run `npm run build` and serve static files from `/var/www/.../frontend-dist/` if you want a production-like preview; the default path below is **dev server only**.
 
 ## 2) Preflight Inputs (fill these first)
 
@@ -28,7 +33,7 @@ This server is treated as a long-running development instance (not immutable-onl
 - Domain A record: `flow.mentoverse.eu -> <your-vps-ip>`
 - Deploy/development user on server (recommended): `deployer`
 - Repo path (this guide uses): `/opt/mvPipeline`
-- Tenant UUID for worker: `<WORKER_TENANT_ID>`
+- Optional worker filter: `WORKER_TENANT_ID=<uuid>` if you want a single-tenant process; omit for all active tenants
 - Secrets and tokens:
   - `AUTH_SECRET_KEY`
   - `OPENAI_API_KEY` (if needed)
@@ -157,7 +162,6 @@ pip install --upgrade pip
 pip install -r requirements.txt
 cd /opt/mvPipeline/frontend
 npm install
-npm run build
 ```
 
 `/opt/mvPipeline` remains owned by `deployer`, so Cursor can SSH as `deployer` and edit code directly without root.
@@ -176,33 +180,29 @@ SCHEDULER_CHECK_INTERVAL_SECONDS=300
 EOF
 ```
 
-Build frontend env:
+Frontend env for **this VPS** (browser talks to Nginx; use relative `/api/v1` so the same origin works through the proxy):
 
 ```bash
-cat > /opt/mvPipeline/frontend/.env.production <<'EOF'
+cat > /opt/mvPipeline/frontend/.env.development <<'EOF'
 VITE_API_URL=/api/v1
 EOF
-cd /opt/mvPipeline/frontend
-npm run build
 ```
 
-## 6) Filesystem Layout for Nginx
+Keep `.env.production` if you ever run a static build (`VITE_API_URL=/api/v1`); it is not required for daily dev.
 
-```bash
-sudo mkdir -p /var/www/flow.mentoverse.eu
-sudo rsync -a --delete /opt/mvPipeline/frontend/dist/ /var/www/flow.mentoverse.eu/frontend-dist/
-sudo chown -R www-data:www-data /var/www/flow.mentoverse.eu
-```
+## 6) Runtime Paths
 
-Ensure runtime output/log paths exist:
+Ensure output/log paths exist:
 
 ```bash
 mkdir -p /opt/mvPipeline/output /opt/mvPipeline/logs
 ```
 
+No rsync step is required for routine UI work; Nginx forwards the site to Vite.
+
 ## 7) systemd Services
 
-Create API service:
+### 7.1) API
 
 ```bash
 sudo tee /etc/systemd/system/mvpipeline-api.service >/dev/null <<'EOF'
@@ -216,11 +216,10 @@ User=deployer
 Group=deployer
 WorkingDirectory=/opt/mvPipeline
 EnvironmentFile=/opt/mvPipeline/.env
-ExecStart=/opt/mvPipeline/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+ExecStart=/opt/mvPipeline/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 Restart=always
 RestartSec=5
 
-# Allow deploy user writes while service reads env/code
 UMask=0022
 
 [Install]
@@ -228,12 +227,12 @@ WantedBy=multi-user.target
 EOF
 ```
 
-Create worker service (single tenant):
+### 7.2) Worker (all active tenants)
 
 ```bash
 sudo tee /etc/systemd/system/mvpipeline-worker.service >/dev/null <<'EOF'
 [Unit]
-Description=mvPipeline Tenant Worker
+Description=mvPipeline Worker (jobs + scheduler)
 After=network.target mysql.service mvpipeline-api.service
 Wants=mysql.service
 
@@ -242,7 +241,6 @@ User=deployer
 Group=deployer
 WorkingDirectory=/opt/mvPipeline
 EnvironmentFile=/opt/mvPipeline/.env
-Environment=WORKER_TENANT_ID=<WORKER_TENANT_ID>
 ExecStart=/opt/mvPipeline/venv/bin/python -m app.worker
 Restart=always
 RestartSec=5
@@ -253,19 +251,69 @@ WantedBy=multi-user.target
 EOF
 ```
 
-Enable and start:
+Optional: add `Environment=WORKER_TENANT_ID=<uuid>` under `[Service]` to limit this unit to one tenant.
+
+### 7.3) Frontend (Vite dev server, persistent)
+
+`VITE_DEV_PUBLIC_HOST` and `VITE_DEV_HMR_CLIENT_PORT` make HMR work over **wss** when users load `https://flow.mentoverse.eu`. Vite still listens only on localhost; Nginx terminates TLS.
+
+```bash
+sudo tee /etc/systemd/system/mvpipeline-frontend-dev.service >/dev/null <<'EOF'
+[Unit]
+Description=mvPipeline Vite dev server (frontend)
+After=network.target mvpipeline-api.service
+
+[Service]
+Type=simple
+User=deployer
+Group=deployer
+WorkingDirectory=/opt/mvPipeline/frontend
+Environment=NODE_ENV=development
+Environment=VITE_DEV_PUBLIC_HOST=flow.mentoverse.eu
+Environment=VITE_DEV_HMR_CLIENT_PORT=443
+ExecStart=/opt/mvPipeline/frontend/node_modules/.bin/vite
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+Use the Vite binary as `ExecStart` so systemd tracks the real Node process (cleaner restarts than `npm run dev`).
+
+Enable and start API and worker first, then the frontend:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now mvpipeline-api.service
 sudo systemctl enable --now mvpipeline-worker.service
+sudo systemctl enable --now mvpipeline-frontend-dev.service
 sudo systemctl status mvpipeline-api.service --no-pager
 sudo systemctl status mvpipeline-worker.service --no-pager
+sudo systemctl status mvpipeline-frontend-dev.service --no-pager
+```
+
+After `npm install` or `package.json` / lockfile changes (so `node_modules/.bin/vite` exists), restart the frontend service:
+
+```bash
+sudo systemctl restart mvpipeline-frontend-dev.service
 ```
 
 ## 8) Nginx Configuration
 
-Create site config:
+WebSocket upgrade map (HTTP context; load once):
+
+```bash
+sudo tee /etc/nginx/conf.d/websocket-upgrade.map.conf >/dev/null <<'EOF'
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+EOF
+```
+
+Site config: proxy `/` to Vite, `/api/` to the API, `/output/` to disk.
 
 ```bash
 sudo tee /etc/nginx/sites-available/flow.mentoverse.eu >/dev/null <<'EOF'
@@ -273,11 +321,16 @@ server {
     listen 80;
     server_name flow.mentoverse.eu;
 
-    root /var/www/flow.mentoverse.eu/frontend-dist;
-    index index.html;
-
     location / {
-        try_files $uri $uri/ /index.html;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
     }
 
     location /api/ {
@@ -299,16 +352,24 @@ EOF
 Enable and validate:
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/flow.mentoverse.eu /etc/nginx/sites-enabled/flow.mentoverse.eu
+sudo ln -sf /etc/nginx/sites-available/flow.mentoverse.eu /etc/nginx/sites-enabled/flow.mentoverse.eu
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+If Certbot modified this file, ensure the **`location /`** block still proxies to `127.0.0.1:3000` with the WebSocket headers above after TLS setup.
 
 ## 9) TLS (Let's Encrypt)
 
 ```bash
 sudo certbot --nginx -d flow.mentoverse.eu
 sudo systemctl status certbot.timer --no-pager
+```
+
+Re-check Nginx:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
 ## 10) First-Time App Bootstrap
@@ -321,7 +382,7 @@ source venv/bin/activate
 python scripts/create_user.py --username admin --email you@example.com
 ```
 
-Check API health and login flow:
+Check API health:
 
 ```bash
 curl -sS https://flow.mentoverse.eu/health
@@ -332,15 +393,17 @@ curl -sS https://flow.mentoverse.eu/health
 - Open `https://flow.mentoverse.eu/login`
 - Sign in with bootstrap user
 - Confirm task list loads
+- Edit a visible string in `frontend/src`, save, confirm the browser updates without a full reload (HMR)
 - Trigger one task/job processing
 - Confirm:
   - API logs: `journalctl -u mvpipeline-api -f`
   - Worker logs: `journalctl -u mvpipeline-worker -f`
+  - Frontend logs: `journalctl -u mvpipeline-frontend-dev -f`
   - Output file exists under `/opt/mvPipeline/output/<task-id>/`
 
-## 12) Update / Deploy Workflow
+## 12) Update / Sync Workflow
 
-Use this on each deploy:
+Pull dependencies and restart **backend** services when Python or env changes; restart **frontend** when Node dependencies change. No static rsync for normal dev.
 
 ```bash
 ssh deployer@flow.mentoverse.eu <<'EOF'
@@ -351,44 +414,53 @@ source venv/bin/activate
 pip install -r requirements.txt
 cd frontend
 npm ci
-npm run build
-sudo rsync -a --delete /opt/mvPipeline/frontend/dist/ /var/www/flow.mentoverse.eu/frontend-dist/
 sudo systemctl restart mvpipeline-api.service
 sudo systemctl restart mvpipeline-worker.service
-sudo systemctl reload nginx
+sudo systemctl restart mvpipeline-frontend-dev.service
 EOF
 ```
 
-For Cursor live development on the VPS:
+### 12.1) Daily editing (Cursor or SSH)
 
-- Connect Cursor via SSH as `deployer`.
-- Edit code directly in `/opt/mvPipeline`.
-- Restart services after backend changes:
-  - `sudo systemctl restart mvpipeline-api.service`
-  - `sudo systemctl restart mvpipeline-worker.service`
-- Rebuild frontend after UI changes:
-  - `cd /opt/mvPipeline/frontend && npm run build`
-  - `sudo rsync -a --delete /opt/mvPipeline/frontend/dist/ /var/www/flow.mentoverse.eu/frontend-dist/`
-  - `sudo systemctl reload nginx`
+- Edit under `/opt/mvPipeline` as `deployer`.
+- **Python / API / worker logic:**  
+  `sudo systemctl restart mvpipeline-api.service`  
+  `sudo systemctl restart mvpipeline-worker.service`
+- **Vue / static assets in `frontend/src`:** no service restart; Vite reloads.
+- **`package.json` / lockfile / `vite.config.js`:**  
+  `sudo systemctl restart mvpipeline-frontend-dev.service`
+
+### 12.2) Optional: static build preview
+
+To test a production build without Vite:
+
+```bash
+cd /opt/mvPipeline/frontend && npm run build
+sudo mkdir -p /var/www/flow.mentoverse.eu/frontend-dist
+sudo rsync -a --delete /opt/mvPipeline/frontend/dist/ /var/www/flow.mentoverse.eu/frontend-dist/
+```
+
+You would temporarily point Nginx `location /` at `root /var/www/flow.mentoverse.eu/frontend-dist` (and `try_files`) instead of the Vite proxy; switch back when returning to dev-server mode.
 
 ## 13) Operational Notes
 
-- This project currently defaults several sensitive settings in code; always override through `/opt/mvPipeline/.env` in production.
+- Override sensitive settings through `/opt/mvPipeline/.env` on the server.
 - Back up at minimum:
   - MySQL database (daily dump)
   - `/opt/mvPipeline/output/` (if these assets are required for publish/audit)
-- If you later add more tenants with high volume, run one worker service per tenant (`mvpipeline-worker@<tenant-id>.service` template).
+- If one worker cannot keep up with job volume, you can run additional worker processes (they compete on the same DB polling model) or split tenants using multiple units each with a different `WORKER_TENANT_ID`.
+- The Vite dev server is convenient for a dedicated dev VPS; do not use this exact pattern for a hard production environment where you want immutable artifacts and no dev tooling on the edge.
 
 ## 14) Quick Troubleshooting
 
-- API not reachable:
-  - `sudo systemctl status mvpipeline-api`
-  - `sudo journalctl -u mvpipeline-api -n 200 --no-pager`
-- Worker idle/not processing:
-  - validate `WORKER_TENANT_ID`
-  - `sudo journalctl -u mvpipeline-worker -n 200 --no-pager`
-- Frontend loads but API fails:
-  - check `VITE_API_URL=/api/v1`
-  - check Nginx `/api/` proxy block and reload
-- 502 from Nginx:
-  - API service likely down or not bound to `127.0.0.1:8000`
+- **API not reachable:**  
+  `sudo systemctl status mvpipeline-api`  
+  `sudo journalctl -u mvpipeline-api -n 200 --no-pager`
+- **Worker idle:** confirm at least one **active** tenant exists; check logs: `journalctl -u mvpipeline-worker -n 200 --no-pager`
+- **Blank page or HMR disconnects:**  
+  - `sudo systemctl status mvpipeline-frontend-dev`  
+  - Confirm `VITE_DEV_PUBLIC_HOST` matches the browser hostname and port `443` for HMR  
+  - Confirm Nginx has `Upgrade` / `Connection $connection_upgrade` on `location /`
+- **API errors from the UI:** ensure `frontend/.env.development` has `VITE_API_URL=/api/v1` on the VPS; check Nginx `/api/` proxy block.
+- **502 on `/`:** Vite service down or not listening on `127.0.0.1:3000`
+- **502 on `/api/`:** API not bound to `127.0.0.1:8000`
