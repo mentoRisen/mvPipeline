@@ -44,6 +44,7 @@ def build_adapter(result, *, api_key="test-key"):
         model="fake-model",
         api_url="https://example.test/v1/chat/completions",
         timeout_seconds=5,
+        max_bundle_items=12,
     )
 
 
@@ -51,14 +52,14 @@ def test_adapter_requires_api_key():
     adapter = build_adapter(FakeResponse({}), api_key=None)
 
     with pytest.raises(TextDraftUpstreamError):
-        adapter.generate_single_task_draft(brief="Create a launch post", tenant_context={})
+        adapter.generate_campaign_draft(brief="Create a launch post", tenant_context={})
 
 
 def test_adapter_maps_timeout_errors():
     adapter = build_adapter(requests.Timeout("slow"))
 
     with pytest.raises(TextDraftUpstreamError):
-        adapter.generate_single_task_draft(brief="Create a launch post", tenant_context={})
+        adapter.generate_campaign_draft(brief="Create a launch post", tenant_context={})
 
 
 def test_adapter_maps_refusals():
@@ -77,7 +78,7 @@ def test_adapter_maps_refusals():
     )
 
     with pytest.raises(TextDraftRefusalError):
-        adapter.generate_single_task_draft(brief="Create a launch post", tenant_context={})
+        adapter.generate_campaign_draft(brief="Create a launch post", tenant_context={})
 
 
 def test_adapter_rejects_non_json_content():
@@ -96,25 +97,29 @@ def test_adapter_rejects_non_json_content():
     )
 
     with pytest.raises(TextDraftUpstreamError):
-        adapter.generate_single_task_draft(brief="Create a launch post", tenant_context={})
+        adapter.generate_campaign_draft(brief="Create a launch post", tenant_context={})
 
 
 def test_adapter_accepts_list_shaped_content():
     payload = {
-        "task": {
-            "name": "Launch post",
-            "template": "instagram_post",
-            "meta": {"theme": "launch"},
-            "post": {"caption": "Hello world"},
-        },
-        "jobs": [
+        "items": [
             {
-                "generator": "dalle",
-                "purpose": "imagecontent",
-                "prompt": {"prompt": "launch visual"},
-                "order": 0,
+                "task": {
+                    "name": "Launch post",
+                    "template": "instagram_post",
+                    "meta": {"theme": "launch"},
+                    "post": {"caption": "Hello world"},
+                },
+                "jobs": [
+                    {
+                        "generator": "dalle",
+                        "purpose": "imagecontent",
+                        "prompt": {"prompt": "launch visual"},
+                        "order": 0,
+                    }
+                ],
             }
-        ],
+        ]
     }
     adapter = build_adapter(
         FakeResponse(
@@ -135,9 +140,9 @@ def test_adapter_accepts_list_shaped_content():
         )
     )
 
-    result = adapter.generate_single_task_draft(
+    result = adapter.generate_campaign_draft(
         brief="Create a launch post",
         tenant_context={"name": "Acme"},
     )
 
-    assert result["task"]["template"] == "instagram_post"
+    assert result["items"][0]["task"]["template"] == "instagram_post"

@@ -322,10 +322,20 @@ export default {
         this.showError(err.response?.data?.detail || 'Failed to create task')
       }
     },
-    async handleAiDraftCreated(createdTask) {
+    async handleAiDraftCreated(payload) {
       this.showAiDraftModal = false
-      this.showSuccess(`AI draft created successfully: ${createdTask.id}`)
-      this.selectTask(createdTask.id)
+      const tasks = payload?.tasks || []
+      const n = tasks.length
+      if (n === 0) {
+        await this.loadTasks()
+        return
+      }
+      const summary =
+        n === 1
+          ? `AI draft created 1 task (${tasks[0].id}).`
+          : `AI draft created ${n} tasks (all-or-nothing bundle).`
+      this.showSuccess(summary)
+      this.selectTask(tasks[0].id)
       await this.loadTasks()
     },
     handleAiDraftDiscarded(message) {

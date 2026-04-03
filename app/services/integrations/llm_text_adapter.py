@@ -10,6 +10,7 @@ import requests
 from app.config import (
     AI_TASK_DRAFT_API_URL,
     AI_TASK_DRAFT_MODEL,
+    AI_TASK_DRAFT_MAX_BUNDLE_ITEMS,
     AI_TASK_DRAFT_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
 )
@@ -28,7 +29,7 @@ class TextDraftUpstreamError(TextDraftAdapterError):
 
 
 class OpenAITextDraftAdapter:
-    """Generate one structured task draft from a natural-language brief."""
+    """Generate structured task draft bundles from a natural-language brief."""
 
     def __init__(
         self,
@@ -37,40 +38,44 @@ class OpenAITextDraftAdapter:
         api_url: str = AI_TASK_DRAFT_API_URL,
         model: str = AI_TASK_DRAFT_MODEL,
         timeout_seconds: int = AI_TASK_DRAFT_TIMEOUT_SECONDS,
+        max_bundle_items: int = AI_TASK_DRAFT_MAX_BUNDLE_ITEMS,
         session: requests.sessions.Session | None = None,
     ) -> None:
         self.api_key = api_key
         self.api_url = api_url
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self.max_bundle_items = max_bundle_items
         self.session = session or requests.Session()
 
-    def generate_single_task_draft(
+    def generate_campaign_draft(
         self,
         *,
         brief: str,
         tenant_context: dict[str, Any],
     ) -> dict[str, Any]:
-        """Return one raw draft bundle for later schema validation."""
+        """Return raw draft JSON: ``{\"items\":[...]}`` with instagram_post tasks."""
         if not self.api_key:
             raise TextDraftUpstreamError("AI draft preview is not configured")
+
+        system = (
+            "You generate one or more draft tasks for template `instagram_post` from the "
+            "user's campaign brief. Each draft task must include one or more draft jobs. "
+            "Respond with JSON only using this shape: "
+            '{"items":['
+            '{"task":{"name":"...","template":"instagram_post","meta":{},"post":{}},'
+            '"jobs":[{"generator":"...","purpose":"...","prompt":{},"order":0}],'
+            '"warnings":[]}]} '
+            f"Use at most {self.max_bundle_items} items. "
+            "Prefer multiple items when the brief clearly describes distinct posts or angles. "
+            "Do not include tenant ids, credentials, or commentary."
+        )
 
         payload = {
             "model": self.model,
             "response_format": {"type": "json_object"},
             "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You generate exactly one draft task for template "
-                        "`instagram_post` and one or more draft jobs. "
-                        "Respond with JSON only using this shape: "
-                        '{"task":{"name":"...","template":"instagram_post","meta":{},"post":{}},'
-                        '"jobs":[{"generator":"...","purpose":"...","prompt":{},"order":0}],'
-                        '"warnings":[]}. '
-                        "Do not include tenant ids, credentials, or commentary."
-                    ),
-                },
+                {"role": "system", "content": system},
                 {
                     "role": "user",
                     "content": json.dumps(

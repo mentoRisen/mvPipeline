@@ -38,15 +38,15 @@ This document describes the runtime behavior that is actually wired in the curre
   `TaskDetail.loadTask()` -> `taskService.getTask()` -> `GET /api/v1/tasks/{id}` -> `task_repo.get_task_by_id()` plus inline `Job` query in `app/api/routes.py`.
   Create flow: `TaskList.vue` -> `taskService.createTask()` -> `POST /api/v1/tasks` -> template hydration in `app/api/routes.py` -> `task_repo.save()`.
   AI create flow: `TaskList.vue` -> `AiTaskDraftModal.vue` -> `taskService.previewAiTaskDraft()` -> `POST /api/v1/tasks/ai-draft-preview` in `app/api/routes.py` -> `app/services/ai_task_draft_service.py` -> `app/services/integrations/llm_text_adapter.py`.
-  AI confirm flow: `AiTaskDraftModal.vue` -> `taskService.confirmAiTaskDraft()` -> `POST /api/v1/tasks/ai-draft-confirm` -> `app/services/ai_task_draft_service.py` -> `task_repo.create_task_with_jobs()`.
+  AI confirm flow: `AiTaskDraftModal.vue` -> `taskService.confirmAiTaskDraft()` -> `POST /api/v1/tasks/ai-draft-confirm` -> `app/services/ai_task_draft_service.py` -> `task_repo.create_task_bundle_with_jobs()` (one transaction for the whole bundle).
   Update flow: `TaskDetail.vue` -> `taskService.updateTask()` -> `PUT /api/v1/tasks/{id}` -> `task_repo.save()`.
   Delete flow: `TaskDetail.vue` -> `taskService.deleteTask()` -> `DELETE /api/v1/tasks/{id}` -> inline job deletion + task deletion in `app/api/routes.py`.
 - Persistence touchpoints:
-  tasks and jobs are stored in MySQL. Create/update/delete happens through a mix of repository functions and direct `Session(engine)` blocks in `app/api/routes.py`. AI preview does not write to MySQL; AI confirm creates one task plus its jobs through a shared backend workflow and one transaction boundary.
+  tasks and jobs are stored in MySQL. Create/update/delete happens through a mix of repository functions and direct `Session(engine)` blocks in `app/api/routes.py`. AI preview does not write to MySQL; AI confirm creates every task and job in the reviewed bundle through one shared backend workflow and **one** transaction (all-or-nothing).
 - Integration touchpoints:
   AI preview calls an external text-LLM adapter with an allowlisted subset of tenant context. Plain list/detail/create/update/delete have no external integration.
 - Notable risks or inconsistencies:
-  the home route uses local component state for selected task rather than the `/tasks/:id` route, so deep linking and in-app selection use different UI shells. The route layer still mixes HTTP handling, template shaping, and direct DB access in one file, although the AI draft preview/confirm path now moves multi-step draft logic into `app/services/ai_task_draft_service.py`. Slice 1 AI drafts remain browser-memory only until the user confirms or closes the modal.
+  the home route uses local component state for selected task rather than the `/tasks/:id` route, so deep linking and in-app selection use different UI shells. The route layer still mixes HTTP handling, template shaping, and direct DB access in one file, although the AI draft preview/confirm path now moves multi-step draft logic into `app/services/ai_task_draft_service.py`. AI draft bundles (one or many tasks) remain browser-memory only until the user confirms or closes the modal; there is no cross-refresh persisted draft session yet.
 
 ### Job CRUD And Manual Job Processing
 

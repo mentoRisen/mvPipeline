@@ -147,7 +147,7 @@ class AiTaskDraftRequest(BaseModel):
         ...,
         min_length=1,
         max_length=4000,
-        description="Natural-language brief for generating one draft task",
+        description="Natural-language brief for generating one or more draft tasks",
     )
 
 
@@ -173,8 +173,8 @@ class AiDraftJob(BaseModel):
     order: int = Field(default=0, ge=0)
 
 
-class AiTaskDraftResponse(BaseModel):
-    """Preview payload for the AI draft flow."""
+class AiTaskDraftItem(BaseModel):
+    """One draft task plus jobs inside an AI draft bundle (preview or confirm)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -183,8 +183,39 @@ class AiTaskDraftResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-class AiTaskDraftConfirmRequest(AiTaskDraftResponse):
-    """Reviewed draft payload used for atomic task/job creation."""
+class AiTaskDraftBundleResponse(BaseModel):
+    """Preview payload: ordered list of draft tasks, each with jobs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AiTaskDraftItem] = Field(
+        ...,
+        min_length=1,
+        description="Draft tasks in creation order",
+    )
+
+
+class AiTaskDraftBundleConfirmRequest(BaseModel):
+    """Reviewed bundle for atomic multi-task creation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AiTaskDraftItem] = Field(..., min_length=1)
+
+
+class AiTaskDraftConfirmBundleResponse(BaseModel):
+    """Result of confirming an AI draft bundle (all tasks created or none)."""
+
+    tasks: list[TaskResponse]
+
+
+class AiTaskDraftValidationErrorBody(BaseModel):
+    """Machine-readable validation error for AI draft preview/confirm."""
+
+    error: str = "ai_draft_validation"
+    message: str
+    item_index: Optional[int] = None
+    field: Optional[str] = None
 
 
 class ApprovalAction(BaseModel):

@@ -178,7 +178,7 @@ export const taskService = {
     return response.data
   },
 
-  // Preview one AI-generated task draft
+  // Preview AI-generated task draft bundle (one or more tasks)
   async previewAiTaskDraft(payload, options = {}) {
     const response = await api.post('/tasks/ai-draft-preview', payload, {
       signal: options.signal,
@@ -186,7 +186,7 @@ export const taskService = {
     return response.data
   },
 
-  // Confirm one reviewed AI-generated task draft
+  // Confirm reviewed AI draft bundle (atomic: all tasks/jobs or none)
   async confirmAiTaskDraft(payload, options = {}) {
     const response = await api.post('/tasks/ai-draft-confirm', payload, {
       signal: options.signal,

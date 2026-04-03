@@ -16,9 +16,11 @@ from app.models.job import Job, JobStatus
 from app.models.tenant import Tenant
 from app.models.schedule_rule import ScheduleRule
 from app.api.schemas import (
-    AiTaskDraftConfirmRequest,
+    AiTaskDraftBundleConfirmRequest,
+    AiTaskDraftBundleResponse,
+    AiTaskDraftConfirmBundleResponse,
     AiTaskDraftRequest,
-    AiTaskDraftResponse,
+    AiTaskDraftValidationErrorBody,
     TaskCreate,
     TaskUpdate,
     TaskResponse,
@@ -39,6 +41,7 @@ import app.services.tenant_repo as tenant_repo
 import app.services.schedule_rule_repo as schedule_rule_repo
 from app.services.ai_task_draft_service import (
     AiTaskDraftService,
+    AiTaskDraftItemValidationError,
     AiTaskDraftValidationError,
     TextDraftRefusalError,
     TextDraftUpstreamError,
@@ -125,6 +128,19 @@ def get_db_session():
 def get_ai_task_draft_service() -> AiTaskDraftService:
     """Build the shared AI draft preview service."""
     return AiTaskDraftService(OpenAITextDraftAdapter())
+
+
+def _ai_draft_validation_detail(
+    exc: AiTaskDraftValidationError,
+) -> dict:
+    """Serialize AI draft validation errors for JSON ``detail``."""
+    if isinstance(exc, AiTaskDraftItemValidationError):
+        return AiTaskDraftValidationErrorBody(
+            message=str(exc),
+            item_index=exc.item_index,
+            field=exc.field,
+        ).model_dump()
+    return AiTaskDraftValidationErrorBody(message=str(exc)).model_dump()
 
 
 # --- Tenant routes ---
@@ -295,35 +311,45 @@ def delete_schedule_rule_route(
 # --- Task routes ---
 
 
-@scoped_router.post("/tasks/ai-draft-preview", response_model=AiTaskDraftResponse)
+@scoped_router.post("/tasks/ai-draft-preview", response_model=AiTaskDraftBundleResponse)
 def create_ai_task_draft_preview(
     data: AiTaskDraftRequest,
     tenant: Tenant = Depends(tenant_context_dependency),
 ):
-    """Return one tenant-aware AI draft preview without persisting records."""
+    """Return a tenant-aware AI draft bundle preview without persisting records."""
     service = get_ai_task_draft_service()
     try:
         return service.generate_preview(brief=data.brief, tenant=tenant)
     except TextDraftRefusalError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except AiTaskDraftValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422, detail=_ai_draft_validation_detail(exc)
+        ) from exc
     except TextDraftUpstreamError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@scoped_router.post("/tasks/ai-draft-confirm", response_model=TaskResponse, status_code=201)
+@scoped_router.post(
+    "/tasks/ai-draft-confirm",
+    response_model=AiTaskDraftConfirmBundleResponse,
+    status_code=201,
+)
 def confirm_ai_task_draft(
-    data: AiTaskDraftConfirmRequest,
+    data: AiTaskDraftBundleConfirmRequest,
     tenant: Tenant = Depends(tenant_context_dependency),
 ):
-    """Persist one reviewed AI draft as a real task plus jobs."""
+    """Persist a reviewed AI draft bundle atomically (all tasks and jobs or none)."""
     service = get_ai_task_draft_service()
     try:
-        task = service.confirm_preview(draft=data, tenant=tenant)
-        return TaskResponse.model_validate(task)
+        tasks = service.confirm_bundle(draft=data, tenant=tenant)
+        return AiTaskDraftConfirmBundleResponse(
+            tasks=[TaskResponse.model_validate(t) for t in tasks]
+        )
     except AiTaskDraftValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422, detail=_ai_draft_validation_detail(exc)
+        ) from exc
     except (IntegrityError, SQLAlchemyError) as exc:
         raise HTTPException(status_code=500, detail="Failed to persist reviewed draft") from exc
 
