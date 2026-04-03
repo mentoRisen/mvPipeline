@@ -90,8 +90,9 @@ class AiTaskDraftService:
                 "AI draft preview must include at least one task"
             )
         if len(items_raw) > self.max_bundle_items:
-            raise AiTaskDraftValidationError(
-                f"AI draft preview exceeds maximum of {self.max_bundle_items} tasks"
+            raise AiTaskDraftItemValidationError(
+                f"AI draft preview exceeds maximum of {self.max_bundle_items} tasks",
+                field="items",
             )
         items: list[AiTaskDraftItem] = []
         for idx, item_dict in enumerate(items_raw):
