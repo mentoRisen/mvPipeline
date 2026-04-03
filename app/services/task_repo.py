@@ -156,6 +156,26 @@ def create_task_with_jobs(task: Task, jobs: list[Job]) -> Task:
     return task
 
 
+def create_task_bundle_with_jobs(
+    bundles: list[tuple[Task, list[Job]]],
+) -> list[Task]:
+    """Persist many tasks and their jobs in a single transaction (all or nothing)."""
+    if not bundles:
+        return []
+    created: list[Task] = []
+    with Session(engine) as session:
+        for task, jobs in bundles:
+            session.add(task)
+            for job in jobs:
+                job.task_id = task.id
+                session.add(job)
+            created.append(task)
+        session.commit()
+        for task in created:
+            session.refresh(task)
+    return created
+
+
 def mark_failed(task: Task, error: str) -> Task:
     """Mark a task as failed with an error message.
     

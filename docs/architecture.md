@@ -224,7 +224,7 @@ Each external system should have one clear adapter boundary and one clear caller
 
 - Current state: sessions are opened from many locations.
 - Target state: application services define transaction boundaries; repositories and persistence helpers perform DB work underneath them.
-- Recent example: AI draft confirmation uses an application-owned workflow plus `task_repo.create_task_with_jobs()` so one reviewed draft task and its jobs can be created in a single transaction.
+- Recent example: AI draft confirmation uses an application-owned workflow plus `task_repo.create_task_bundle_with_jobs()` so an entire reviewed bundle (many tasks and their jobs) is created in a single transaction.
 
 ### OpenAI Images API
 

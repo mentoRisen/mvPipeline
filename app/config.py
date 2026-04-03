@@ -165,3 +165,6 @@ AI_TASK_DRAFT_MODEL = os.getenv("AI_TASK_DRAFT_MODEL", "gpt-4o-mini")
 
 AI_TASK_DRAFT_TIMEOUT_SECONDS = int(os.getenv("AI_TASK_DRAFT_TIMEOUT_SECONDS", "30"))
 """Timeout in seconds for the AI draft preview upstream request."""
+
+AI_TASK_DRAFT_MAX_BUNDLE_ITEMS = int(os.getenv("AI_TASK_DRAFT_MAX_BUNDLE_ITEMS", "12"))
+"""Maximum number of draft tasks allowed in one AI preview/confirm bundle."""
