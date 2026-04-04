@@ -193,6 +193,25 @@ export const taskService = {
     })
     return response.data
   },
+
+  async listAiDraftSessions() {
+    const response = await api.get('/tasks/ai-draft-sessions')
+    return response.data
+  },
+
+  async getAiDraftSession(sessionId) {
+    const response = await api.get(`/tasks/ai-draft-sessions/${sessionId}`)
+    return response.data
+  },
+
+  async patchAiDraftSession(sessionId, body) {
+    const response = await api.patch(`/tasks/ai-draft-sessions/${sessionId}`, body)
+    return response.data
+  },
+
+  async deleteAiDraftSession(sessionId) {
+    await api.delete(`/tasks/ai-draft-sessions/${sessionId}`)
+  },
 }
 
 export const tenantService = {

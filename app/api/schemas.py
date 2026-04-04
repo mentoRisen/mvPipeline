@@ -149,6 +149,10 @@ class AiTaskDraftRequest(BaseModel):
         max_length=4000,
         description="Natural-language brief for generating one or more draft tasks",
     )
+    draft_session_id: Optional[UUID] = Field(
+        default=None,
+        description="When set, replace this active draft session after a successful preview",
+    )
 
 
 class AiDraftTask(BaseModel):
@@ -193,6 +197,10 @@ class AiTaskDraftBundleResponse(BaseModel):
         min_length=1,
         description="Draft tasks in creation order",
     )
+    draft_session_id: Optional[UUID] = Field(
+        default=None,
+        description="Set by the API after persisting the preview; omitted in internal service-only previews",
+    )
 
 
 class AiTaskDraftBundleConfirmRequest(BaseModel):
@@ -201,6 +209,10 @@ class AiTaskDraftBundleConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[AiTaskDraftItem] = Field(..., min_length=1)
+    draft_session_id: Optional[UUID] = Field(
+        default=None,
+        description="When set, complete this session on success or record errors on failure",
+    )
 
 
 class AiTaskDraftConfirmBundleResponse(BaseModel):
@@ -216,6 +228,38 @@ class AiTaskDraftValidationErrorBody(BaseModel):
     message: str
     item_index: Optional[int] = None
     field: Optional[str] = None
+
+
+class AiDraftSessionSummaryResponse(BaseModel):
+    """List entry for resumable AI draft sessions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    brief: str
+    item_count: int
+    updated_at: datetime
+
+
+class AiDraftSessionDetailResponse(BaseModel):
+    """Full draft session for resume in the AI create flow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    brief: str
+    items: list[AiTaskDraftItem] = Field(..., min_length=1)
+    last_error: Optional[dict] = None
+    updated_at: datetime
+
+
+class AiDraftSessionPatchRequest(BaseModel):
+    """Autosave edits for a draft session bundle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    brief: Optional[str] = Field(default=None, max_length=4000)
+    items: Optional[list[AiTaskDraftItem]] = None
 
 
 class ApprovalAction(BaseModel):

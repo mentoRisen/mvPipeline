@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from app.api.schemas import (
     AiTaskDraftBundleConfirmRequest,
     AiTaskDraftBundleResponse,
 )
+from app.services import ai_draft_session_repo
 from app.models.task import Task
 from app.services.ai_task_draft_service import AiTaskDraftValidationError
 from app.services.integrations.llm_text_adapter import (
@@ -79,6 +82,8 @@ def test_ai_draft_preview_route_returns_bundle(client, tenant, monkeypatch):
     assert len(body["items"]) == 1
     assert body["items"][0]["task"]["template"] == "instagram_post"
     assert service.calls[0]["tenant_id"] == tenant.id
+    assert body.get("draft_session_id")
+    UUID(body["draft_session_id"])  # valid UUID
 
 
 def test_ai_draft_preview_route_rejects_tenant_fields_in_body(client, tenant):
@@ -345,6 +350,132 @@ def test_ai_draft_preview_route_returns_404_for_unknown_tenant(client):
     )
 
     assert response.status_code == 404
+
+
+def test_ai_draft_confirm_second_submit_with_session_returns_404(
+    client, tenant, monkeypatch, auth_user
+):
+    service = StubDraftService(_sample_bundle())
+    monkeypatch.setattr(
+        "app.api.routes.get_ai_task_draft_service",
+        lambda: service,
+    )
+    monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
+
+    prev = client.post(
+        "/api/v1/tasks/ai-draft-preview",
+        headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
+        json={"brief": "Create a launch post"},
+    )
+    assert prev.status_code == 200
+    sid = prev.json()["draft_session_id"]
+
+    t1 = Task(name="Launch post", template="instagram_post", tenant_id=tenant.id)
+    monkeypatch.setattr(
+        "app.api.routes.get_ai_task_draft_service",
+        lambda: StubConfirmService([t1]),
+    )
+
+    payload = AiTaskDraftBundleConfirmRequest.model_validate(
+        {
+            "items": [
+                {
+                    "task": {
+                        "name": "Launch post",
+                        "template": "instagram_post",
+                        "meta": {"theme": "launch"},
+                        "post": {"caption": "Hello world"},
+                    },
+                    "jobs": [
+                        {
+                            "generator": "dalle",
+                            "purpose": "imagecontent",
+                            "prompt": {"prompt": "launch visual"},
+                            "order": 0,
+                        }
+                    ],
+                }
+            ],
+            "draft_session_id": sid,
+        }
+    ).model_dump(mode="json")
+
+    r1 = client.post(
+        "/api/v1/tasks/ai-draft-confirm",
+        headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
+        json=payload,
+    )
+    assert r1.status_code == 201
+
+    r2 = client.post(
+        "/api/v1/tasks/ai-draft-confirm",
+        headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
+        json=payload,
+    )
+    assert r2.status_code == 404
+
+
+def test_ai_draft_confirm_validation_persists_last_error(
+    client, tenant, monkeypatch, auth_user
+):
+    service = StubDraftService(_sample_bundle())
+    monkeypatch.setattr(
+        "app.api.routes.get_ai_task_draft_service",
+        lambda: service,
+    )
+    monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
+
+    prev = client.post(
+        "/api/v1/tasks/ai-draft-preview",
+        headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
+        json={"brief": "Create a launch post"},
+    )
+    sid = prev.json()["draft_session_id"]
+
+    monkeypatch.setattr(
+        "app.api.routes.get_ai_task_draft_service",
+        lambda: StubConfirmService(
+            AiTaskDraftValidationError("invalid reviewed draft")
+        ),
+    )
+
+    payload = AiTaskDraftBundleConfirmRequest.model_validate(
+        {
+            "items": [
+                {
+                    "task": {
+                        "name": "Launch post",
+                        "template": "instagram_post",
+                        "meta": {"theme": "launch"},
+                        "post": {"caption": "Hello world"},
+                    },
+                    "jobs": [
+                        {
+                            "generator": "dalle",
+                            "purpose": "imagecontent",
+                            "prompt": {"prompt": "launch visual"},
+                            "order": 0,
+                        }
+                    ],
+                }
+            ],
+            "draft_session_id": sid,
+        }
+    ).model_dump(mode="json")
+
+    response = client.post(
+        "/api/v1/tasks/ai-draft-confirm",
+        headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
+        json=payload,
+    )
+    assert response.status_code == 422
+
+    row = ai_draft_session_repo.get_active_for_user(
+        UUID(sid), tenant_id=tenant.id, user_id=auth_user.id
+    )
+    assert row is not None
+    assert row.last_error is not None
+    assert row.last_error.get("error") == "ai_draft_validation"
 
 
 def test_list_tasks_route_uses_injected_tenant_scope(client, tenant, db_session):

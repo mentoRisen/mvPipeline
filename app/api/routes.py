@@ -14,11 +14,16 @@ logger = logging.getLogger(__name__)
 from app.models.task import Task, TaskStatus
 from app.models.job import Job, JobStatus
 from app.models.tenant import Tenant
+from app.models.user import User
 from app.models.schedule_rule import ScheduleRule
 from app.api.schemas import (
+    AiDraftSessionDetailResponse,
+    AiDraftSessionPatchRequest,
+    AiDraftSessionSummaryResponse,
     AiTaskDraftBundleConfirmRequest,
     AiTaskDraftBundleResponse,
     AiTaskDraftConfirmBundleResponse,
+    AiTaskDraftItem,
     AiTaskDraftRequest,
     AiTaskDraftValidationErrorBody,
     TaskCreate,
@@ -39,6 +44,7 @@ from app.db.engine import engine
 import app.services.task_repo as task_repo
 import app.services.tenant_repo as tenant_repo
 import app.services.schedule_rule_repo as schedule_rule_repo
+import app.services.ai_draft_session_repo as ai_draft_session_repo
 from app.services.ai_task_draft_service import (
     AiTaskDraftService,
     AiTaskDraftItemValidationError,
@@ -315,11 +321,23 @@ def delete_schedule_rule_route(
 def create_ai_task_draft_preview(
     data: AiTaskDraftRequest,
     tenant: Tenant = Depends(tenant_context_dependency),
+    user: User = Depends(auth_service.get_current_active_user),
 ):
-    """Return a tenant-aware AI draft bundle preview without persisting records."""
+    """Return a tenant-aware AI draft bundle preview and persist a draft session."""
     service = get_ai_task_draft_service()
     try:
-        return service.generate_preview(brief=data.brief, tenant=tenant)
+        preview = service.generate_preview(brief=data.brief, tenant=tenant)
+        session_id = ai_draft_session_repo.save_after_preview(
+            tenant_id=tenant.id,
+            user_id=user.id,
+            brief=data.brief,
+            items=[it.model_dump(mode="json") for it in preview.items],
+            draft_session_id=data.draft_session_id,
+        )
+        return AiTaskDraftBundleResponse(
+            items=preview.items,
+            draft_session_id=session_id,
+        )
     except TextDraftRefusalError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except AiTaskDraftValidationError as exc:
@@ -338,20 +356,160 @@ def create_ai_task_draft_preview(
 def confirm_ai_task_draft(
     data: AiTaskDraftBundleConfirmRequest,
     tenant: Tenant = Depends(tenant_context_dependency),
+    user: User = Depends(auth_service.get_current_active_user),
 ):
     """Persist a reviewed AI draft bundle atomically (all tasks and jobs or none)."""
+    if data.draft_session_id is not None:
+        if ai_draft_session_repo.get_active_for_user(
+            data.draft_session_id,
+            tenant_id=tenant.id,
+            user_id=user.id,
+        ) is None:
+            raise HTTPException(
+                status_code=404,
+                detail="AI draft session not found or already completed",
+            )
     service = get_ai_task_draft_service()
     try:
         tasks = service.confirm_bundle(draft=data, tenant=tenant)
+        if data.draft_session_id is not None:
+            ai_draft_session_repo.mark_completed(
+                session_id=data.draft_session_id,
+                tenant_id=tenant.id,
+                user_id=user.id,
+            )
         return AiTaskDraftConfirmBundleResponse(
             tasks=[TaskResponse.model_validate(t) for t in tasks]
         )
     except AiTaskDraftValidationError as exc:
+        if data.draft_session_id is not None:
+            ai_draft_session_repo.set_last_error(
+                session_id=data.draft_session_id,
+                tenant_id=tenant.id,
+                user_id=user.id,
+                error=_ai_draft_validation_detail(exc),
+            )
         raise HTTPException(
             status_code=422, detail=_ai_draft_validation_detail(exc)
         ) from exc
     except (IntegrityError, SQLAlchemyError) as exc:
+        if data.draft_session_id is not None:
+            ai_draft_session_repo.set_last_error(
+                session_id=data.draft_session_id,
+                tenant_id=tenant.id,
+                user_id=user.id,
+                error={
+                    "error": "db",
+                    "message": "Failed to persist reviewed draft",
+                },
+            )
         raise HTTPException(status_code=500, detail="Failed to persist reviewed draft") from exc
+
+
+@scoped_router.get(
+    "/tasks/ai-draft-sessions",
+    response_model=list[AiDraftSessionSummaryResponse],
+)
+def list_ai_draft_sessions(
+    tenant: Tenant = Depends(tenant_context_dependency),
+    user: User = Depends(auth_service.get_current_active_user),
+):
+    """List active resumable AI draft sessions for the current tenant and user."""
+    rows = ai_draft_session_repo.list_active_for_user(
+        tenant_id=tenant.id, user_id=user.id
+    )
+    out: list[AiDraftSessionSummaryResponse] = []
+    for row in rows:
+        items = row.bundle.get("items")
+        count = len(items) if isinstance(items, list) else 0
+        out.append(
+            AiDraftSessionSummaryResponse(
+                id=row.id,
+                brief=row.brief,
+                item_count=count,
+                updated_at=row.updated_at,
+            )
+        )
+    return out
+
+
+@scoped_router.get(
+    "/tasks/ai-draft-sessions/{session_id}",
+    response_model=AiDraftSessionDetailResponse,
+)
+def get_ai_draft_session(
+    session_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+    user: User = Depends(auth_service.get_current_active_user),
+):
+    """Load one draft session for resume."""
+    row = ai_draft_session_repo.get_active_for_user(
+        session_id,
+        tenant_id=tenant.id,
+        user_id=user.id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="AI draft session not found")
+    raw_items = row.bundle.get("items")
+    if not isinstance(raw_items, list) or len(raw_items) == 0:
+        raise HTTPException(status_code=500, detail="Stored draft bundle is invalid")
+    items = [AiTaskDraftItem.model_validate(it) for it in raw_items]
+    return AiDraftSessionDetailResponse(
+        id=row.id,
+        brief=row.brief,
+        items=items,
+        last_error=row.last_error,
+        updated_at=row.updated_at,
+    )
+
+
+@scoped_router.patch(
+    "/tasks/ai-draft-sessions/{session_id}",
+    response_model=AiDraftSessionDetailResponse,
+)
+def patch_ai_draft_session(
+    session_id: UUID,
+    body: AiDraftSessionPatchRequest,
+    tenant: Tenant = Depends(tenant_context_dependency),
+    user: User = Depends(auth_service.get_current_active_user),
+):
+    """Autosave draft session edits."""
+    items_dump: Optional[list[dict]] = None
+    if body.items is not None:
+        items_dump = [it.model_dump(mode="json") for it in body.items]
+    row = ai_draft_session_repo.patch_session_bundle(
+        session_id=session_id,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        brief=body.brief,
+        items=items_dump,
+    )
+    raw_items = row.bundle.get("items")
+    if not isinstance(raw_items, list):
+        raise HTTPException(status_code=500, detail="Stored draft bundle is invalid")
+    items = [AiTaskDraftItem.model_validate(it) for it in raw_items]
+    return AiDraftSessionDetailResponse(
+        id=row.id,
+        brief=row.brief,
+        items=items,
+        last_error=row.last_error,
+        updated_at=row.updated_at,
+    )
+
+
+@scoped_router.delete("/tasks/ai-draft-sessions/{session_id}", status_code=204)
+def delete_ai_draft_session(
+    session_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+    user: User = Depends(auth_service.get_current_active_user),
+):
+    """Discard a draft session."""
+    ai_draft_session_repo.mark_discarded(
+        session_id=session_id,
+        tenant_id=tenant.id,
+        user_id=user.id,
+    )
+    return None
 
 
 @scoped_router.get("/tasks", response_model=TaskListResponse)

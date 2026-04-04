@@ -168,3 +168,14 @@ AI_TASK_DRAFT_TIMEOUT_SECONDS = int(os.getenv("AI_TASK_DRAFT_TIMEOUT_SECONDS", "
 
 AI_TASK_DRAFT_MAX_BUNDLE_ITEMS = int(os.getenv("AI_TASK_DRAFT_MAX_BUNDLE_ITEMS", "12"))
 """Maximum number of draft tasks allowed in one AI preview/confirm bundle."""
+
+AI_DRAFT_SESSION_TTL_DAYS = int(os.getenv("AI_DRAFT_SESSION_TTL_DAYS", "7"))
+"""Draft sessions stop being listed or mutable after this many days without refresh."""
+
+AI_DRAFT_SESSION_MAX_PER_USER = int(os.getenv("AI_DRAFT_SESSION_MAX_PER_USER", "10"))
+"""Cap active draft sessions per (tenant, user); oldest active may be removed on new preview."""
+
+AI_DRAFT_SESSION_MAX_BUNDLE_BYTES = int(
+    os.getenv("AI_DRAFT_SESSION_MAX_BUNDLE_BYTES", "524288")
+)
+"""Maximum UTF-8 byte size of stored JSON bundle payload (default 512 KiB)."""
