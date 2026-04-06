@@ -11,14 +11,26 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import ForeignKey, String, Text, TypeDecorator
+from sqlalchemy.dialects import mysql
 from sqlmodel import SQLModel, Field, Column, JSON
 
 
 class UUIDString36(TypeDecorator):
-    """Store ``uuid.UUID`` as 36-char string for MySQL FK compatibility and SQLite tests."""
+    """Store ``uuid.UUID`` as 36-char string.
+
+    MySQL FK requires the referencing column type to match the referenced PK exactly.
+    Existing ``tenants.id`` / ``users.id`` are typically ``CHAR(36)`` while plain
+    ``String(36)`` emits ``VARCHAR(36)``, which MySQL 8 rejects (error 3780).
+    SQLite tests keep ``VARCHAR(36)``-style via ``String(36)``.
+    """
 
     impl = String(36)
     cache_ok = True
+
+    def load_dialect_impl(self, dialect: Any) -> Any:
+        if dialect.name == "mysql":
+            return dialect.type_descriptor(mysql.CHAR(36))
+        return dialect.type_descriptor(String(36))
 
     def process_bind_param(self, value: Any, dialect: Any) -> str | None:
         if value is None:
@@ -46,9 +58,7 @@ class AiDraftSession(SQLModel, table=True):
 
     __tablename__ = "ai_draft_sessions"
 
-    # Use String(36) in MySQL so FK columns match `tenants.id` / `users.id` (UUID text with hyphens).
-    # The default SQLAlchemy UUID render for MySQL can be CHAR(32), which triggers error 3780
-    # ("incompatible" FK) against existing tables.
+    # UUIDString36 → CHAR(36) on MySQL to match existing tenant/user PK DDL (see class docstring).
     id: UUID = Field(
         default_factory=uuid4,
         sa_column=Column(UUIDString36, primary_key=True),
