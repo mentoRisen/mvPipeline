@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mvpipeline-mysql": {
+      "command": "bash",
+      "args": ["${workspaceFolder}/.cursor/run-mysql-mcp.sh"]
+    }
+  }
+}
