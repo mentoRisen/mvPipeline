@@ -10,8 +10,29 @@ from enum import Enum
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, Text
+from sqlalchemy import ForeignKey, String, Text, TypeDecorator
 from sqlmodel import SQLModel, Field, Column, JSON
+
+
+class UUIDString36(TypeDecorator):
+    """Store ``uuid.UUID`` as 36-char string for MySQL FK compatibility and SQLite tests."""
+
+    impl = String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value: Any, dialect: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, UUID):
+            return str(value)
+        return str(value)
+
+    def process_result_value(self, value: Any, dialect: Any) -> UUID | None:
+        if value is None:
+            return None
+        if isinstance(value, UUID):
+            return value
+        return UUID(str(value))
 
 
 class AiDraftSessionStatus(str, Enum):
@@ -25,10 +46,30 @@ class AiDraftSession(SQLModel, table=True):
 
     __tablename__ = "ai_draft_sessions"
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    # Use String(36) in MySQL so FK columns match `tenants.id` / `users.id` (UUID text with hyphens).
+    # The default SQLAlchemy UUID render for MySQL can be CHAR(32), which triggers error 3780
+    # ("incompatible" FK) against existing tables.
+    id: UUID = Field(
+        default_factory=uuid4,
+        sa_column=Column(UUIDString36, primary_key=True),
+    )
 
-    tenant_id: UUID = Field(foreign_key="tenants.id", index=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True)
+    tenant_id: UUID = Field(
+        sa_column=Column(
+            UUIDString36,
+            ForeignKey("tenants.id"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    user_id: UUID = Field(
+        sa_column=Column(
+            UUIDString36,
+            ForeignKey("users.id"),
+            nullable=False,
+            index=True,
+        ),
+    )
 
     brief: str = Field(sa_column=Column(Text))
 
