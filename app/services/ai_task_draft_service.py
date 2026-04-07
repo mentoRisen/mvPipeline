@@ -77,8 +77,12 @@ class AiTaskDraftService:
         """Return a validated preview bundle without persisting any records."""
         raw = self.adapter.generate_campaign_draft(
             brief=brief,
-            tenant_context=self._tenant_context(tenant),
+            tenant_context=self.build_tenant_context(tenant),
         )
+        return self.validate_raw_llm_dict(raw)
+
+    def validate_raw_llm_dict(self, raw: dict[str, Any]) -> AiTaskDraftBundleResponse:
+        """Validate and normalize raw LLM JSON (``items`` or legacy single-task)."""
         coerced = self._coerce_raw_bundle(raw)
         items_raw = coerced.get("items")
         if not isinstance(items_raw, list):
@@ -204,7 +208,7 @@ class AiTaskDraftService:
         )
 
     @staticmethod
-    def _tenant_context(tenant: Tenant) -> dict[str, Any]:
+    def build_tenant_context(tenant: Tenant) -> dict[str, Any]:
         """Build the allowlisted tenant context sent to the model."""
         return {
             "name": tenant.name,

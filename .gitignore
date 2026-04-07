@@ -30,6 +30,7 @@ ENV/
 .env
 .env.local
 .env.*.local
+.cursor/mcp-mysql.env
 
 # Output directories
 output/ 

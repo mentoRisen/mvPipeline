@@ -69,18 +69,35 @@ The application uses MySQL for data storage. Make sure MySQL is installed and ru
    
    The format is: `mysql+pymysql://user:password@host:port/database`
 
-### Optional: Cursor MCP MySQL config
+### Optional: Cursor MySQL MCP (agents & tools)
 
-If you use the MySQL MCP server in Cursor, keep local credentials in `.cursor/mcp-mysql.env`.
+This repo includes [`.cursor/mcp.json`](.cursor/mcp.json), which registers a **read-only** MySQL MCP server ([`mcp-server-mysql`](https://www.npmjs.com/package/mcp-server-mysql)) for Cursor. It is suited to schema exploration and `SELECT` queries from the IDE.
 
-1. Create your local MCP env file from the example:
-   ```bash
-   cp .cursor/mcp-mysql-example.env .cursor/mcp-mysql.env
-   ```
-2. Fill `MYSQL_USER` and `MYSQL_PASS` with your local/tenant-safe DB credentials.
-3. Adjust host/port if needed (for SSH tunnels, set the forwarded local port).
+**Requirements**
 
-`mcp-mysql.env` is gitignored. Commit only the example file when defaults/comments need updating.
+- **Node.js 20+** on the machine where Cursor runs the MCP process (`npx` uses that Node). If `npx` fails with a Node version error, upgrade Node or use `nvm install 20` (or install Node 20 from [nodejs.org](https://nodejs.org/)).
+- **Bash** available to run [`.cursor/run-mysql-mcp.sh`](.cursor/run-mysql-mcp.sh) (standard on macOS/Linux; on Windows use Git Bash, WSL, or adapt the launcher).
+
+**Per-project secrets (recommended for multiple repos / environments)**
+
+Credentials live only in **this** clone, not in your global shell and not in git:
+
+1. Copy [`.cursor/mcp-mysql.env.example`](.cursor/mcp-mysql.env.example) to `.cursor/mcp-mysql.env`.
+2. Set at least `MYSQL_USER` and `MYSQL_PASS` (see example file for optional `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DB`).
+
+The file `.cursor/mcp-mysql.env` is gitignored. Each project or checkout can use different values; nothing is shared via `MCP_MYSQL_*` in your OS environment anymore.
+
+**Remote SSH note**
+
+Where the MCP process runs depends on your Cursor version (local UI vs. remote host). The loader script path uses `${workspaceFolder}` so it always resolves next to this repo. If `mcp-mysql.env` must be read on **your laptop** but the repo only exists on the server, keep a matching `mcp-mysql.env` in a **local** clone or symlink that path—most setups that open this folder over Remote-SSH resolve the workspace on the remote disk, which is enough.
+
+If MySQL runs on the server and your MySQL user is `'…'@'localhost'`, use a tunnel and set `MYSQL_PORT` in `mcp-mysql.env` to the local forward port (see comments in the example):
+
+```bash
+ssh -N -L 13306:127.0.0.1:3306 your-user@your-server
+```
+
+After changing MCP config or env files, **fully restart Cursor**. Prefer a read-only DB user for MCP, not the application’s primary credentials.
 
 ## Authentication & Users
 
