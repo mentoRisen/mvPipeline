@@ -69,6 +69,19 @@ The application uses MySQL for data storage. Make sure MySQL is installed and ru
    
    The format is: `mysql+pymysql://user:password@host:port/database`
 
+### Optional: Cursor MCP MySQL config
+
+If you use the MySQL MCP server in Cursor, keep local credentials in `.cursor/mcp-mysql.env`.
+
+1. Create your local MCP env file from the example:
+   ```bash
+   cp .cursor/mcp-mysql-example.env .cursor/mcp-mysql.env
+   ```
+2. Fill `MYSQL_USER` and `MYSQL_PASS` with your local/tenant-safe DB credentials.
+3. Adjust host/port if needed (for SSH tunnels, set the forwarded local port).
+
+`mcp-mysql.env` is gitignored. Commit only the example file when defaults/comments need updating.
+
 ## Authentication & Users
 
 All API routes under `/api/v1/*` now require a valid Bearer token. Only the root (`/`) and `/health` endpoints remain public.

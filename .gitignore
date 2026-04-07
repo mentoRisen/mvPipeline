@@ -68,3 +68,6 @@ dmypy.json
 # Local tool run artifacts (e.g. ce-review)
 .context/
 
+# Local MCP MySQL credentials
+.cursor/mcp-mysql.env
+
