@@ -12,6 +12,8 @@ import app.models  # noqa: F401
 import app.api.routes as routes
 import app.db.engine as db_engine
 import app.services.schedule_rule_repo as schedule_rule_repo
+import app.config as app_config
+import app.services.ai_draft_session_repo as ai_draft_session_repo
 import app.services.task_repo as task_repo
 import app.services.tenant_repo as tenant_repo
 import app.services.user_repo as user_repo
@@ -34,11 +36,19 @@ def test_engine(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(tenant_repo, "engine", engine)
     monkeypatch.setattr(user_repo, "engine", engine)
     monkeypatch.setattr(schedule_rule_repo, "engine", engine)
+    monkeypatch.setattr(ai_draft_session_repo, "engine", engine)
     monkeypatch.setattr(routes, "engine", engine)
 
     SQLModel.metadata.create_all(engine)
     yield engine
     SQLModel.metadata.drop_all(engine)
+
+
+@pytest.fixture(autouse=True)
+def ai_draft_preview_blocking(monkeypatch: pytest.MonkeyPatch):
+    """Run AI preview LLM work inline so route tests observe final session state."""
+    monkeypatch.setattr(app_config, "AI_DRAFT_PREVIEW_BLOCKING", True)
+    monkeypatch.setattr(app_config, "OPENAI_API_KEY", "test-key")
 
 
 @pytest.fixture(autouse=True)
@@ -70,12 +80,21 @@ def tenant(db_session: Session) -> Tenant:
 
 
 @pytest.fixture
-def client(test_engine) -> Generator[TestClient, None, None]:
-    app.dependency_overrides[auth_service.get_current_active_user] = lambda: User(
+def auth_user(db_session: Session) -> User:
+    user = User(
         username="tester",
         hashed_password="not-used",
         is_active=True,
     )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def client(test_engine, auth_user) -> Generator[TestClient, None, None]:
+    app.dependency_overrides[auth_service.get_current_active_user] = lambda: auth_user
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
