@@ -1,18 +1,10 @@
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 from app.api.schemas import AiTaskDraftBundleResponse
-
-
-class StubDraftService:
-    def __init__(self, result):
-        self.result = result
-
-    def generate_preview(self, *, brief, tenant):
-        if isinstance(self.result, Exception):
-            raise self.result
-        return self.result
+from app.services.integrations.llm_text_adapter import OpenAITextDraftAdapter
 
 
 def _one_item_bundle() -> AiTaskDraftBundleResponse:
@@ -40,6 +32,14 @@ def _one_item_bundle() -> AiTaskDraftBundleResponse:
     )
 
 
+def _mock_llm(monkeypatch, body: dict):
+    monkeypatch.setattr(
+        OpenAITextDraftAdapter,
+        "complete_preview_chat",
+        lambda self, m: json.dumps(body),
+    )
+
+
 def test_list_draft_sessions_empty(client, tenant, monkeypatch):
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
     r = client.get(
@@ -51,10 +51,7 @@ def test_list_draft_sessions_empty(client, tenant, monkeypatch):
 
 
 def test_list_draft_sessions_after_preview(client, tenant, monkeypatch):
-    monkeypatch.setattr(
-        "app.api.routes.get_ai_task_draft_service",
-        lambda: StubDraftService(_one_item_bundle()),
-    )
+    _mock_llm(monkeypatch, _one_item_bundle().model_dump(mode="json"))
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
     client.post(
         "/api/v1/tasks/ai-draft-preview",
@@ -70,13 +67,11 @@ def test_list_draft_sessions_after_preview(client, tenant, monkeypatch):
     assert len(body) == 1
     assert body[0]["brief"] == "Brief text"
     assert body[0]["item_count"] == 1
+    assert body[0]["preview_status"] == "succeeded"
 
 
 def test_get_draft_session_roundtrip(client, tenant, monkeypatch):
-    monkeypatch.setattr(
-        "app.api.routes.get_ai_task_draft_service",
-        lambda: StubDraftService(_one_item_bundle()),
-    )
+    _mock_llm(monkeypatch, _one_item_bundle().model_dump(mode="json"))
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
     prev = client.post(
         "/api/v1/tasks/ai-draft-preview",
@@ -89,15 +84,15 @@ def test_get_draft_session_roundtrip(client, tenant, monkeypatch):
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
     )
     assert r.status_code == 200
-    assert r.json()["brief"] == "Roundtrip"
-    assert len(r.json()["items"]) == 1
+    data = r.json()
+    assert data["brief"] == "Roundtrip"
+    assert len(data["items"]) == 1
+    assert data["preview_status"] == "succeeded"
+    assert len(data["communication_events"]) >= 3
 
 
 def test_delete_draft_session(client, tenant, monkeypatch):
-    monkeypatch.setattr(
-        "app.api.routes.get_ai_task_draft_service",
-        lambda: StubDraftService(_one_item_bundle()),
-    )
+    _mock_llm(monkeypatch, _one_item_bundle().model_dump(mode="json"))
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
     prev = client.post(
         "/api/v1/tasks/ai-draft-preview",
@@ -118,10 +113,7 @@ def test_delete_draft_session(client, tenant, monkeypatch):
 
 
 def test_patch_draft_session_updates_brief(client, tenant, monkeypatch):
-    monkeypatch.setattr(
-        "app.api.routes.get_ai_task_draft_service",
-        lambda: StubDraftService(_one_item_bundle()),
-    )
+    _mock_llm(monkeypatch, _one_item_bundle().model_dump(mode="json"))
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
     prev = client.post(
         "/api/v1/tasks/ai-draft-preview",

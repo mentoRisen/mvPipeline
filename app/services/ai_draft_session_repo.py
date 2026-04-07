@@ -8,19 +8,36 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
 from app.config import (
+    AI_DRAFT_COMMUNICATION_MAX_PAYLOAD_BYTES,
     AI_DRAFT_SESSION_MAX_BUNDLE_BYTES,
     AI_DRAFT_SESSION_MAX_PER_USER,
     AI_DRAFT_SESSION_TTL_DAYS,
 )
 from app.db.engine import engine
-from app.models.ai_draft_session import AiDraftSession, AiDraftSessionStatus
+from app.models.ai_draft_communication_event import (
+    AiDraftCommunicationEvent,
+    AiDraftCommunicationKind,
+)
+from app.models.ai_draft_session import (
+    AiDraftSession,
+    AiDraftPreviewStatus,
+    AiDraftSessionStatus,
+)
 
 
 def _utcnow() -> datetime:
     return datetime.utcnow()
+
+
+def _preview_status_key(row: AiDraftSession) -> str:
+    ps = row.preview_status
+    if isinstance(ps, AiDraftPreviewStatus):
+        return ps.value
+    return str(ps)
 
 
 def _default_expires_at() -> datetime:
@@ -40,35 +57,115 @@ def assert_bundle_within_size(bundle: dict[str, Any]) -> None:
         )
 
 
-def _trim_oldest_active_sessions(
+def assert_communication_payload_within_size(payload: dict[str, Any]) -> None:
+    raw = json.dumps(payload, default=str).encode("utf-8")
+    if len(raw) > AI_DRAFT_COMMUNICATION_MAX_PAYLOAD_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail="AI draft communication event exceeds maximum stored size",
+        )
+
+
+def _delete_communication_events_for_session(db: Session, draft_session_id: UUID) -> None:
+    db.execute(
+        delete(AiDraftCommunicationEvent).where(
+            AiDraftCommunicationEvent.draft_session_id == draft_session_id
+        )
+    )
+
+
+def _next_communication_sequence(db: Session, draft_session_id: UUID) -> int:
+    current = db.exec(
+        select(func.max(AiDraftCommunicationEvent.sequence)).where(
+            AiDraftCommunicationEvent.draft_session_id == draft_session_id
+        )
+    ).first()
+    if current is None:
+        return 0
+    return int(current) + 1
+
+
+def append_communication_event(
+    *,
+    draft_session_id: UUID,
+    tenant_id: UUID,
+    user_id: UUID,
+    kind: AiDraftCommunicationKind,
+    payload: dict[str, Any],
+) -> None:
+    """Append one transcript row; visible to poll clients after commit."""
+
+    assert_communication_payload_within_size(payload)
+    now = _utcnow()
+    with Session(engine) as db:
+        row = db.get(AiDraftSession, draft_session_id)
+        if (
+            row is None
+            or row.tenant_id != tenant_id
+            or row.user_id != user_id
+            or row.status != AiDraftSessionStatus.ACTIVE
+            or row.expires_at <= now
+        ):
+            return
+        seq = _next_communication_sequence(db, draft_session_id)
+        ev = AiDraftCommunicationEvent(
+            draft_session_id=draft_session_id,
+            sequence=seq,
+            kind=kind.value,
+            payload=payload,
+            created_at=_utcnow(),
+        )
+        db.add(ev)
+        row.updated_at = _utcnow()
+        db.add(row)
+        db.commit()
+
+
+def list_communication_events(
+    *,
+    draft_session_id: UUID,
+    tenant_id: UUID,
+    user_id: UUID,
+) -> list[AiDraftCommunicationEvent]:
+    now = _utcnow()
+    with Session(engine) as db:
+        row = db.get(AiDraftSession, draft_session_id)
+        if (
+            row is None
+            or row.tenant_id != tenant_id
+            or row.user_id != user_id
+            or row.expires_at <= now
+        ):
+            return []
+        if row.status != AiDraftSessionStatus.ACTIVE:
+            return []
+        q = (
+            select(AiDraftCommunicationEvent)
+            .where(AiDraftCommunicationEvent.draft_session_id == draft_session_id)
+            .order_by(AiDraftCommunicationEvent.sequence)
+        )
+        return list(db.exec(q).all())
+
+
+def _count_open_active_sessions(
     session: Session,
     *,
     tenant_id: UUID,
     user_id: UUID,
-    slots_needed: int,
-) -> None:
-    """Drop oldest active sessions until ``cap - slots_needed`` remain (room for new row)."""
-
-    if slots_needed <= 0:
-        return
-    target = AI_DRAFT_SESSION_MAX_PER_USER - slots_needed
+) -> int:
     now = _utcnow()
-    while True:
-        q = (
-            select(AiDraftSession)
-            .where(
-                AiDraftSession.tenant_id == tenant_id,
-                AiDraftSession.user_id == user_id,
-                AiDraftSession.status == AiDraftSessionStatus.ACTIVE,
-                AiDraftSession.expires_at > now,
-            )
-            .order_by(AiDraftSession.updated_at.asc())
+    q = (
+        select(func.count())
+        .select_from(AiDraftSession)
+        .where(
+            AiDraftSession.tenant_id == tenant_id,
+            AiDraftSession.user_id == user_id,
+            AiDraftSession.status == AiDraftSessionStatus.ACTIVE,
+            AiDraftSession.expires_at > now,
         )
-        actives = list(session.exec(q).all())
-        if len(actives) <= target:
-            return
-        session.delete(actives[0])
-        session.commit()
+    )
+    count = session.exec(q).one()
+    return int(count or 0)
 
 
 def get_active_for_user(
@@ -114,6 +211,142 @@ def list_active_for_user(
         return list(session.exec(q).all())
 
 
+def start_preview_run(
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+    brief: str,
+    draft_session_id: Optional[UUID] = None,
+) -> UUID:
+    """Create or reset a draft session for async preview; ``preview_status`` becomes RUNNING."""
+
+    now = _utcnow()
+    exp = _default_expires_at()
+    with Session(engine) as db:
+        if draft_session_id is not None:
+            row = db.get(AiDraftSession, draft_session_id)
+            if (
+                row is None
+                or row.tenant_id != tenant_id
+                or row.user_id != user_id
+                or row.status != AiDraftSessionStatus.ACTIVE
+                or row.expires_at <= now
+            ):
+                raise HTTPException(status_code=404, detail="AI draft session not found")
+            if _preview_status_key(row) == AiDraftPreviewStatus.RUNNING.value:
+                raise HTTPException(
+                    status_code=409,
+                    detail="AI draft preview already in progress for this session",
+                )
+            _delete_communication_events_for_session(db, draft_session_id)
+            row.brief = brief
+            row.bundle = {"items": []}
+            row.last_error = None
+            row.preview_status = AiDraftPreviewStatus.RUNNING
+            row.expires_at = exp
+            row.updated_at = now
+            db.add(row)
+            db.commit()
+            return row.id
+
+        open_count = _count_open_active_sessions(
+            db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        if open_count >= AI_DRAFT_SESSION_MAX_PER_USER:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "ai_draft_session_limit_reached",
+                    "message": (
+                        "Maximum open AI drafts reached. Discard old drafts to continue."
+                    ),
+                    "max_per_user": AI_DRAFT_SESSION_MAX_PER_USER,
+                },
+            )
+        row = AiDraftSession(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            brief=brief,
+            bundle={"items": []},
+            last_error=None,
+            status=AiDraftSessionStatus.ACTIVE,
+            preview_status=AiDraftPreviewStatus.RUNNING,
+            expires_at=exp,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row.id
+
+
+def finalize_preview_success(
+    *,
+    draft_session_id: UUID,
+    tenant_id: UUID,
+    user_id: UUID,
+    items: list[dict[str, Any]],
+) -> None:
+    """Persist validated bundle and mark preview SUCCEEDED (must be RUNNING)."""
+
+    bundle = bundle_dict_from_items(items)
+    assert_bundle_within_size(bundle)
+    now = _utcnow()
+    with Session(engine) as db:
+        row = db.get(AiDraftSession, draft_session_id)
+        if (
+            row is None
+            or row.tenant_id != tenant_id
+            or row.user_id != user_id
+            or row.status != AiDraftSessionStatus.ACTIVE
+            or row.expires_at <= now
+        ):
+            return
+        if _preview_status_key(row) != AiDraftPreviewStatus.RUNNING.value:
+            return
+        row.bundle = bundle
+        row.preview_status = AiDraftPreviewStatus.SUCCEEDED
+        row.last_error = None
+        row.expires_at = _default_expires_at()
+        row.updated_at = now
+        db.add(row)
+        db.commit()
+
+
+def finalize_preview_failure(
+    *,
+    draft_session_id: UUID,
+    tenant_id: UUID,
+    user_id: UUID,
+    last_error: dict[str, Any],
+) -> None:
+    """Mark preview FAILED and clear bundle items."""
+
+    now = _utcnow()
+    with Session(engine) as db:
+        row = db.get(AiDraftSession, draft_session_id)
+        if (
+            row is None
+            or row.tenant_id != tenant_id
+            or row.user_id != user_id
+            or row.status != AiDraftSessionStatus.ACTIVE
+            or row.expires_at <= now
+        ):
+            return
+        if _preview_status_key(row) != AiDraftPreviewStatus.RUNNING.value:
+            return
+        row.preview_status = AiDraftPreviewStatus.FAILED
+        row.last_error = last_error
+        row.bundle = {"items": []}
+        row.expires_at = _default_expires_at()
+        row.updated_at = now
+        db.add(row)
+        db.commit()
+
+
 def save_after_preview(
     *,
     tenant_id: UUID,
@@ -143,6 +376,7 @@ def save_after_preview(
             row.brief = brief
             row.bundle = bundle
             row.last_error = None
+            row.preview_status = AiDraftPreviewStatus.SUCCEEDED
             row.expires_at = exp
             row.updated_at = now
             session.add(row)
@@ -150,12 +384,22 @@ def save_after_preview(
             session.refresh(row)
             return row.id
 
-        _trim_oldest_active_sessions(
+        open_count = _count_open_active_sessions(
             session,
             tenant_id=tenant_id,
             user_id=user_id,
-            slots_needed=1,
         )
+        if open_count >= AI_DRAFT_SESSION_MAX_PER_USER:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "ai_draft_session_limit_reached",
+                    "message": (
+                        "Maximum open AI drafts reached. Discard old drafts to continue."
+                    ),
+                    "max_per_user": AI_DRAFT_SESSION_MAX_PER_USER,
+                },
+            )
         row = AiDraftSession(
             tenant_id=tenant_id,
             user_id=user_id,
@@ -163,6 +407,7 @@ def save_after_preview(
             bundle=bundle,
             last_error=None,
             status=AiDraftSessionStatus.ACTIVE,
+            preview_status=AiDraftPreviewStatus.SUCCEEDED,
             expires_at=exp,
             created_at=now,
             updated_at=now,
@@ -197,6 +442,11 @@ def patch_session_bundle(
             or row.expires_at <= now
         ):
             raise HTTPException(status_code=404, detail="AI draft session not found")
+        if _preview_status_key(row) == AiDraftPreviewStatus.RUNNING.value:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot edit draft while AI preview is in progress",
+            )
 
         if items is not None:
             bundle = bundle_dict_from_items(items)
@@ -224,6 +474,11 @@ def mark_completed(*, session_id: UUID, tenant_id: UUID, user_id: UUID) -> None:
             or row.status != AiDraftSessionStatus.ACTIVE
         ):
             raise HTTPException(status_code=404, detail="AI draft session not found")
+        if _preview_status_key(row) != AiDraftPreviewStatus.SUCCEEDED.value:
+            raise HTTPException(
+                status_code=404,
+                detail="AI draft session not found or preview not complete",
+            )
         row.status = AiDraftSessionStatus.COMPLETED
         row.updated_at = now
         row.last_error = None

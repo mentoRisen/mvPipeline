@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from fastapi import HTTPException
+
 from app.models.ai_draft_session import AiDraftSession, AiDraftSessionStatus
 from app.models.user import User
 from app.services import ai_draft_session_repo
@@ -206,3 +208,50 @@ def test_mark_completed_makes_session_invisible(tenant, auth_user, db_session):
     )
     row = db_session.get(AiDraftSession, sid)
     assert row.status == AiDraftSessionStatus.COMPLETED
+
+
+def test_start_preview_run_rejects_new_session_when_cap_reached(
+    tenant, auth_user, monkeypatch
+):
+    monkeypatch.setattr(ai_draft_session_repo, "AI_DRAFT_SESSION_MAX_PER_USER", 1)
+    first = ai_draft_session_repo.start_preview_run(
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        brief="first",
+    )
+    assert first is not None
+
+    try:
+        ai_draft_session_repo.start_preview_run(
+            tenant_id=tenant.id,
+            user_id=auth_user.id,
+            brief="second",
+        )
+        assert False, "Expected cap enforcement HTTPException"
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert isinstance(exc.detail, dict)
+        assert exc.detail.get("error") == "ai_draft_session_limit_reached"
+
+
+def test_start_preview_run_rerun_allowed_at_cap(
+    tenant, auth_user, monkeypatch, db_session
+):
+    monkeypatch.setattr(ai_draft_session_repo, "AI_DRAFT_SESSION_MAX_PER_USER", 1)
+    sid = ai_draft_session_repo.start_preview_run(
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        brief="first",
+    )
+    row = db_session.get(AiDraftSession, sid)
+    row.preview_status = "succeeded"
+    db_session.add(row)
+    db_session.commit()
+
+    same_sid = ai_draft_session_repo.start_preview_run(
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        brief="updated brief",
+        draft_session_id=sid,
+    )
+    assert same_sid == sid

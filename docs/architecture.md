@@ -155,7 +155,7 @@ Target state:
 - Keep the current URLs and request/response contracts where possible.
 - Move route logic toward thin handlers that call application services.
 - Split large route groups gradually by feature or resource when touched, not as a standalone rewrite.
-- Recent example of the intended direction: the AI draft preview/confirm flow keeps new HTTP routes in `app/api/routes.py`, but puts tenant-aware draft generation and atomic draft confirmation behind `app/services/ai_task_draft_service.py` instead of embedding that workflow directly in the route layer. Persisted AI draft sessions (resume after refresh, structured errors on failed confirm) use `app/services/ai_draft_session_repo.py`, scoped by authenticated user and tenant.
+- Recent example of the intended direction: the AI draft preview/confirm flow keeps new HTTP routes in `app/api/routes.py`, but puts tenant-aware draft generation and atomic draft confirmation behind `app/services/ai_task_draft_service.py` instead of embedding that workflow directly in the route layer. Preview LLM work is scheduled from the route via FastAPI `BackgroundTasks` and implemented in `app/services/ai_draft_preview_runner.py` (commit-sized transcript rows for polling). Persisted AI draft sessions (resume after refresh, structured errors on failed confirm) use `app/services/ai_draft_session_repo.py`, scoped by authenticated user and tenant; transcript rows live in `ai_draft_communication_events`. Open draft cap enforcement is reject-on-create (manual discard required), not auto-delete trimming.
 
 ### Repositories
 

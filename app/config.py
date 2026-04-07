@@ -173,9 +173,19 @@ AI_DRAFT_SESSION_TTL_DAYS = int(os.getenv("AI_DRAFT_SESSION_TTL_DAYS", "7"))
 """Draft sessions stop being listed or mutable after this many days without refresh."""
 
 AI_DRAFT_SESSION_MAX_PER_USER = int(os.getenv("AI_DRAFT_SESSION_MAX_PER_USER", "10"))
-"""Cap active draft sessions per (tenant, user); oldest active may be removed on new preview."""
+"""Cap open draft sessions per (tenant, user); new preview is rejected at cap."""
 
 AI_DRAFT_SESSION_MAX_BUNDLE_BYTES = int(
     os.getenv("AI_DRAFT_SESSION_MAX_BUNDLE_BYTES", "524288")
 )
 """Maximum UTF-8 byte size of stored JSON bundle payload (default 512 KiB)."""
+
+AI_DRAFT_COMMUNICATION_MAX_PAYLOAD_BYTES = int(
+    os.getenv("AI_DRAFT_COMMUNICATION_MAX_PAYLOAD_BYTES", "262144")
+)
+"""Max UTF-8 byte size of one transcript JSON payload (default 256 KiB)."""
+
+AI_DRAFT_PREVIEW_BLOCKING = os.getenv(
+    "AI_DRAFT_PREVIEW_BLOCKING", ""
+).lower() in ("1", "true", "yes")
+"""When true, run preview LLM work in the request thread (tests / diagnostics only)."""

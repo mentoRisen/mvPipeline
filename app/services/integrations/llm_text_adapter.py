@@ -48,17 +48,8 @@ class OpenAITextDraftAdapter:
         self.max_bundle_items = max_bundle_items
         self.session = session or requests.Session()
 
-    def generate_campaign_draft(
-        self,
-        *,
-        brief: str,
-        tenant_context: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Return raw draft JSON: ``{\"items\":[...]}`` with instagram_post tasks."""
-        if not self.api_key:
-            raise TextDraftUpstreamError("AI draft preview is not configured")
-
-        system = (
+    def _system_prompt(self) -> str:
+        return (
             "You generate one or more draft tasks for template `instagram_post` from the "
             "user's campaign brief. Each draft task must include one or more draft jobs. "
             "Respond with JSON only using this shape: "
@@ -71,21 +62,35 @@ class OpenAITextDraftAdapter:
             "Do not include tenant ids, credentials, or commentary."
         )
 
+    def build_preview_messages(
+        self,
+        *,
+        brief: str,
+        tenant_context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """OpenAI ``messages`` array for logging and ``complete_preview_chat``."""
+        return [
+            {"role": "system", "content": self._system_prompt()},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "brief": brief,
+                        "tenant_context": tenant_context,
+                    }
+                ),
+            },
+        ]
+
+    def complete_preview_chat(self, messages: list[dict[str, Any]]) -> str:
+        """POST chat completion; return assistant message content (raw string)."""
+        if not self.api_key:
+            raise TextDraftUpstreamError("AI draft preview is not configured")
+
         payload = {
             "model": self.model,
             "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": system},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "brief": brief,
-                            "tenant_context": tenant_context,
-                        }
-                    ),
-                },
-            ],
+            "messages": messages,
         }
 
         try:
@@ -128,9 +133,26 @@ class OpenAITextDraftAdapter:
         if not isinstance(content, str):
             raise TextDraftUpstreamError("AI draft preview returned unsupported content")
 
+        return content
+
+    def parse_campaign_json_from_assistant(self, content: str) -> dict[str, Any]:
         try:
-            return json.loads(content)
+            parsed: dict[str, Any] = json.loads(content)
+            return parsed
         except ValueError as exc:
             raise TextDraftUpstreamError(
                 "AI draft preview returned non-JSON content"
             ) from exc
+
+    def generate_campaign_draft(
+        self,
+        *,
+        brief: str,
+        tenant_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return raw draft JSON: ``{\"items\":[...]}`` with instagram_post tasks."""
+        messages = self.build_preview_messages(
+            brief=brief, tenant_context=tenant_context
+        )
+        content = self.complete_preview_chat(messages)
+        return self.parse_campaign_json_from_assistant(content)

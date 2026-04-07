@@ -65,6 +65,15 @@ class AiDraftSessionStatus(str, Enum):
     DISCARDED = "discarded"
 
 
+class AiDraftPreviewStatus(str, Enum):
+    """Lifecycle of the async LLM preview for this session."""
+
+    IDLE = "idle"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class AiDraftSession(SQLModel, table=True):
     """Server-side draft container for AI task bundle review."""
 
@@ -110,6 +119,12 @@ class AiDraftSession(SQLModel, table=True):
     status: AiDraftSessionStatus = Field(
         default=AiDraftSessionStatus.ACTIVE,
         sa_column=Column(String(32)),
+    )
+
+    preview_status: AiDraftPreviewStatus = Field(
+        default=AiDraftPreviewStatus.SUCCEEDED,
+        sa_column=Column(String(32)),
+        description="Async AI preview: running until bundle is ready or failed",
     )
 
     expires_at: datetime = Field(description="Session is not resumable after this time")

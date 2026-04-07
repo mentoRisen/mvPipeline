@@ -12,6 +12,7 @@ import app.models  # noqa: F401
 import app.api.routes as routes
 import app.db.engine as db_engine
 import app.services.schedule_rule_repo as schedule_rule_repo
+import app.config as app_config
 import app.services.ai_draft_session_repo as ai_draft_session_repo
 import app.services.task_repo as task_repo
 import app.services.tenant_repo as tenant_repo
@@ -41,6 +42,13 @@ def test_engine(monkeypatch: pytest.MonkeyPatch):
     SQLModel.metadata.create_all(engine)
     yield engine
     SQLModel.metadata.drop_all(engine)
+
+
+@pytest.fixture(autouse=True)
+def ai_draft_preview_blocking(monkeypatch: pytest.MonkeyPatch):
+    """Run AI preview LLM work inline so route tests observe final session state."""
+    monkeypatch.setattr(app_config, "AI_DRAFT_PREVIEW_BLOCKING", True)
+    monkeypatch.setattr(app_config, "OPENAI_API_KEY", "test-key")
 
 
 @pytest.fixture(autouse=True)

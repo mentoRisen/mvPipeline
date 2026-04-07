@@ -24,6 +24,11 @@
         {{ error }}
       </div>
 
+      <div
+        class="ai-draft-layout"
+        :class="{ 'ai-draft-layout-split': showTranscriptColumn }"
+      >
+        <div class="ai-draft-main">
       <div v-if="!bundle" class="ai-draft-step">
         <div class="form-group">
           <label>Brief <span class="required">*</span></label>
@@ -268,6 +273,29 @@
           </button>
         </div>
       </div>
+        </div>
+
+        <aside v-if="showTranscriptColumn" class="ai-draft-transcript" aria-label="AI transcript">
+          <h4 class="ai-draft-transcript-title">AI transcript</h4>
+          <p class="ai-draft-transcript-hint">
+            Technical log (prompts and model output) for debugging. Not shown to end users.
+          </p>
+          <div v-if="!communicationEvents.length && generating" class="ai-draft-transcript-wait">
+            Waiting for first events…
+          </div>
+          <div
+            v-for="ev in communicationEvents"
+            :key="`ev-${ev.sequence}`"
+            class="ai-draft-transcript-block"
+          >
+            <div class="ai-draft-transcript-meta">
+              <span class="ai-draft-ev-kind">{{ ev.kind }}</span>
+              <span class="ai-draft-ev-seq">#{{ ev.sequence }}</span>
+            </div>
+            <pre class="ai-draft-ev-payload">{{ formatTranscriptPayload(ev) }}</pre>
+          </div>
+        </aside>
+      </div>
     </div>
   </div>
 </template>
@@ -293,6 +321,9 @@ function cloneBundle(bundle) {
 function formatDraftErrorDetail(detail) {
   if (detail == null) return 'Request failed.'
   if (typeof detail === 'string') return detail
+  if (typeof detail === 'object' && detail.error === 'ai_draft_session_limit_reached') {
+    return detail.message || 'Maximum open AI drafts reached. Discard old drafts to continue.'
+  }
   if (typeof detail === 'object' && detail.error === 'db' && detail.message) {
     return detail.message
   }
@@ -336,9 +367,18 @@ export default {
       resumableSessions: [],
       loadingResumeList: false,
       autosaveTimer: null,
+      communicationEvents: [],
+      previewPollTimer: null,
     }
   },
   computed: {
+    showTranscriptColumn() {
+      return (
+        this.generating ||
+        this.bundle != null ||
+        (Array.isArray(this.communicationEvents) && this.communicationEvents.length > 0)
+      )
+    },
     trimmedBrief() {
       return this.brief.trim()
     },
@@ -390,6 +430,7 @@ export default {
       if (!this.visible || !oldTenantId || newTenantId === oldTenantId) return
       const hadDraftWork = Boolean(this.bundle) || Boolean(this.trimmedBrief)
       this.abortPreviewRequest()
+      this.stopPreviewPolling()
       this.clearAutosaveTimer()
       this.resetState()
       this.$emit('close')
@@ -397,6 +438,9 @@ export default {
         this.$emit('discarded', 'Tenant changed. AI draft bundle was discarded.')
       }
     },
+  },
+  beforeUnmount() {
+    this.stopPreviewPolling()
   },
   methods: {
     handleOverlayClick() {
@@ -406,6 +450,7 @@ export default {
     closeModal() {
       if (this.confirming) return
       this.abortPreviewRequest()
+      this.stopPreviewPolling()
       this.clearAutosaveTimer()
       this.resetState()
       this.$emit('close')
@@ -415,6 +460,7 @@ export default {
       this.bundle = null
       this.expandedTasks = {}
       this.error = null
+      this.communicationEvents = []
     },
     clearDraftSessionIdForNewPreview() {
       this.draftSessionId = null
@@ -472,10 +518,20 @@ export default {
       if (!this.tenantId || this.generating) return
       this.error = null
       this.generating = true
+      let leaveGeneratingForPoll = false
       try {
         const data = await taskService.getAiDraftSession(sessionId)
         this.draftSessionId = data.id
         this.brief = data.brief || ''
+        this.setCommunicationEventsFromApi(data.communication_events)
+        if (data.preview_status === 'running') {
+          this.bundle = null
+          this.error = null
+          this.startPreviewPolling()
+          leaveGeneratingForPoll = true
+          await this.loadResumableSessions()
+          return
+        }
         const items = (data.items || []).map((item, i) => this.normalizeItem(item, i))
         this.bundle = { items }
         this.expandedTasks = {}
@@ -493,7 +549,9 @@ export default {
           error?.message ||
           'Could not load saved draft.'
       } finally {
-        this.generating = false
+        if (!leaveGeneratingForPoll) {
+          this.generating = false
+        }
       }
     },
     async discardSavedDraft() {
@@ -537,6 +595,65 @@ export default {
       if (this.previewAbortController) {
         this.previewAbortController.abort()
         this.previewAbortController = null
+      }
+    },
+    stopPreviewPolling() {
+      if (this.previewPollTimer) {
+        clearInterval(this.previewPollTimer)
+        this.previewPollTimer = null
+      }
+    },
+    startPreviewPolling() {
+      this.stopPreviewPolling()
+      this.previewPollTimer = setInterval(() => {
+        this.pollDraftSession()
+      }, 900)
+    },
+    setCommunicationEventsFromApi(events) {
+      if (!Array.isArray(events)) {
+        this.communicationEvents = []
+        return
+      }
+      this.communicationEvents = [...events].sort((a, b) => a.sequence - b.sequence)
+    },
+    formatTranscriptPayload(ev) {
+      try {
+        return JSON.stringify(ev.payload, null, 2)
+      } catch {
+        return String(ev.payload)
+      }
+    },
+    async pollDraftSession() {
+      if (!this.draftSessionId || !this.tenantId) return
+      try {
+        const data = await taskService.getAiDraftSession(this.draftSessionId)
+        this.setCommunicationEventsFromApi(data.communication_events)
+        if (data.preview_status === 'running') {
+          return
+        }
+        this.stopPreviewPolling()
+        this.generating = false
+        this.previewAbortController = null
+        if (data.preview_status === 'failed') {
+          this.bundle = null
+          this.error =
+            formatDraftErrorDetail(data.last_error) || 'AI preview failed.'
+          await this.loadResumableSessions()
+          return
+        }
+        this.error = null
+        const items = (data.items || []).map((item, i) => this.normalizeItem(item, i))
+        this.bundle = { items }
+        this.expandedTasks = {}
+        await this.loadResumableSessions()
+      } catch (error) {
+        if (error?.response?.status === 401) {
+          this.stopPreviewPolling()
+          this.generating = false
+          this.handleAuthLoss()
+          return
+        }
+        /* Keep polling on transient errors */
       }
     },
     normalizeItem(rawItem, index) {
@@ -586,6 +703,7 @@ export default {
       return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError'
     },
     handleAuthLoss() {
+      this.stopPreviewPolling()
       this.clearAutosaveTimer()
       this.resetState()
       this.$emit('close')
@@ -602,9 +720,11 @@ export default {
       }
 
       this.error = null
+      this.communicationEvents = []
       this.generating = true
       const controller = new AbortController()
       this.previewAbortController = controller
+      let keepGenerating = false
 
       try {
         const payload = { brief: this.trimmedBrief }
@@ -617,6 +737,23 @@ export default {
         if (data.draft_session_id) {
           this.draftSessionId = data.draft_session_id
         }
+        this.setCommunicationEventsFromApi(data.communication_events)
+
+        if (data.preview_status === 'running') {
+          keepGenerating = true
+          this.startPreviewPolling()
+          await this.loadResumableSessions()
+          return
+        }
+
+        if (data.preview_status === 'failed') {
+          this.bundle = null
+          this.error =
+            formatDraftErrorDetail(data.last_error) || 'AI preview failed.'
+          await this.loadResumableSessions()
+          return
+        }
+
         const items = (data.items || []).map((item, i) => this.normalizeItem(item, i))
         this.bundle = { items }
         this.expandedTasks = {}
@@ -635,7 +772,9 @@ export default {
         if (this.previewAbortController === controller) {
           this.previewAbortController = null
         }
-        this.generating = false
+        if (!keepGenerating) {
+          this.generating = false
+        }
       }
     },
     addJob(taskIndex) {
@@ -679,6 +818,7 @@ export default {
       }
     },
     resetState() {
+      this.stopPreviewPolling()
       this.brief = ''
       this.bundle = null
       this.expandedTasks = {}
@@ -688,6 +828,7 @@ export default {
       this.previewAbortController = null
       this.draftSessionId = null
       this.resumableSessions = []
+      this.communicationEvents = []
     },
   },
 }
@@ -695,7 +836,89 @@ export default {
 
 <style scoped>
 .ai-draft-modal {
-  max-width: 56rem;
+  width: min(96vw, 96rem);
+  max-width: 96rem;
+}
+
+.ai-draft-layout {
+  display: block;
+}
+
+.ai-draft-layout-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(22rem, 34rem);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .ai-draft-layout-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ai-draft-transcript {
+  border: 1px solid var(--color-border, #d4d4d8);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  background: var(--color-surface-muted, #f4f4f5);
+  max-height: min(70vh, 36rem);
+  overflow: auto;
+  font-size: var(--text-sm, 0.875rem);
+}
+
+.ai-draft-transcript-title {
+  margin: 0 0 0.35rem;
+  font-size: var(--text-base);
+}
+
+.ai-draft-transcript-hint {
+  margin: 0 0 0.75rem;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.ai-draft-transcript-wait {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.ai-draft-transcript-block {
+  margin-bottom: 0.75rem;
+}
+
+.ai-draft-transcript-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.ai-draft-ev-kind {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ai-draft-ev-seq {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+}
+
+.ai-draft-ev-payload {
+  margin: 0;
+  padding: 0.5rem;
+  background: #1e1e1e;
+  color: #e4e4e7;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 12rem;
+  overflow: auto;
 }
 
 .ai-draft-resume-card {

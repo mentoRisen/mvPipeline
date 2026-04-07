@@ -187,19 +187,41 @@ class AiTaskDraftItem(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class AiDraftCommunicationEventResponse(BaseModel):
+    """One persisted AI transcript row for prompt-engineering visibility."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sequence: int
+    kind: str
+    payload: dict
+    created_at: datetime
+
+
 class AiTaskDraftBundleResponse(BaseModel):
     """Preview payload: ordered list of draft tasks, each with jobs."""
 
     model_config = ConfigDict(extra="forbid")
 
     items: list[AiTaskDraftItem] = Field(
-        ...,
-        min_length=1,
-        description="Draft tasks in creation order",
+        default_factory=list,
+        description="Draft tasks in creation order; empty while async preview is running",
     )
     draft_session_id: Optional[UUID] = Field(
         default=None,
         description="Set by the API after persisting the preview; omitted in internal service-only previews",
+    )
+    preview_status: str = Field(
+        default="succeeded",
+        description="Async preview: running until complete, then succeeded or failed",
+    )
+    last_error: Optional[dict] = Field(
+        default=None,
+        description="When preview_status is failed (blocking mode), structured error if available",
+    )
+    communication_events: list[AiDraftCommunicationEventResponse] = Field(
+        default_factory=list,
+        description="Transcript rows when returned from blocking preview completion",
     )
 
 
@@ -239,6 +261,10 @@ class AiDraftSessionSummaryResponse(BaseModel):
     brief: str
     item_count: int
     updated_at: datetime
+    preview_status: str = Field(
+        default="succeeded",
+        description="Async AI preview lifecycle for this session",
+    )
 
 
 class AiDraftSessionDetailResponse(BaseModel):
@@ -248,9 +274,16 @@ class AiDraftSessionDetailResponse(BaseModel):
 
     id: UUID
     brief: str
-    items: list[AiTaskDraftItem] = Field(..., min_length=1)
+    items: list[AiTaskDraftItem] = Field(
+        default_factory=list,
+        description="Empty while preview is running or failed without bundle",
+    )
     last_error: Optional[dict] = None
     updated_at: datetime
+    preview_status: str = "succeeded"
+    communication_events: list[AiDraftCommunicationEventResponse] = Field(
+        default_factory=list,
+    )
 
 
 class AiDraftSessionPatchRequest(BaseModel):
