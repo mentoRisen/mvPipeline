@@ -41,6 +41,9 @@ def run_ai_draft_preview_job(
     tenant_id: UUID,
     user_id: UUID,
     brief: str,
+    iteration_mode: str | None = None,
+    instruction_text: str | None = None,
+    target_scope: str | None = None,
 ) -> None:
     """Run LLM preview: transcript rows, then bundle + terminal preview_status."""
 
@@ -57,6 +60,16 @@ def run_ai_draft_preview_job(
 
     adapter = OpenAITextDraftAdapter(api_key=app_config.OPENAI_API_KEY)
     service = AiTaskDraftService(adapter)
+    effective_brief = brief
+    if instruction_text and instruction_text.strip():
+        mode = iteration_mode or "regenerate"
+        effective_brief = (
+            f"{brief}\n\n"
+            f"[Follow-up iteration mode: {mode}]\n"
+            f"[Target scope: {target_scope or 'campaign'}]\n"
+            f"Apply this instruction while preserving campaign context:\n"
+            f"{instruction_text.strip()}"
+        )
 
     try:
         ai_draft_session_repo.append_communication_event(
@@ -64,10 +77,15 @@ def run_ai_draft_preview_job(
             tenant_id=tenant_id,
             user_id=user_id,
             kind=AiDraftCommunicationKind.USER_INPUT,
-            payload={"brief": brief},
+            payload={
+                "brief": effective_brief,
+                "iteration_mode": iteration_mode,
+                "instruction_text": instruction_text,
+                "target_scope": target_scope,
+            },
         )
         messages = adapter.build_preview_messages(
-            brief=brief,
+            brief=effective_brief,
             tenant_context=AiTaskDraftService.build_tenant_context(tenant),
         )
         ai_draft_session_repo.append_communication_event(

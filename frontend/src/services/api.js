@@ -212,6 +212,13 @@ export const taskService = {
   async deleteAiDraftSession(sessionId) {
     await api.delete(`/tasks/ai-draft-sessions/${sessionId}`)
   },
+
+  async restoreAiDraftSessionSnapshot(sessionId, snapshotId) {
+    const response = await api.post(`/tasks/ai-draft-sessions/${sessionId}/restore`, {
+      snapshot_id: snapshotId,
+    })
+    return response.data
+  },
 }
 
 export const tenantService = {

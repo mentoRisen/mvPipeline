@@ -1,6 +1,7 @@
 """Pydantic schemas for API requests and responses."""
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 from uuid import UUID
 
@@ -153,6 +154,25 @@ class AiTaskDraftRequest(BaseModel):
         default=None,
         description="When set, replace this active draft session after a successful preview",
     )
+    iteration_mode: Optional[str] = Field(
+        default=None,
+        description="Follow-up instruction mode: regenerate or targeted_intent",
+    )
+    instruction_text: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=4000,
+        description="Additional instruction used for follow-up preview iterations",
+    )
+    target_scope: Optional[str] = Field(
+        default=None,
+        description="Target granularity for follow-up instructions; v1 supports campaign",
+    )
+
+
+class AiDraftIterationMode(str, Enum):
+    REGENERATE = "regenerate"
+    TARGETED_INTENT = "targeted_intent"
 
 
 class AiDraftTask(BaseModel):
@@ -284,6 +304,9 @@ class AiDraftSessionDetailResponse(BaseModel):
     communication_events: list[AiDraftCommunicationEventResponse] = Field(
         default_factory=list,
     )
+    undo_snapshots: list["AiDraftRevisionSnapshotResponse"] = Field(
+        default_factory=list,
+    )
 
 
 class AiDraftSessionPatchRequest(BaseModel):
@@ -293,6 +316,23 @@ class AiDraftSessionPatchRequest(BaseModel):
 
     brief: Optional[str] = Field(default=None, max_length=4000)
     items: Optional[list[AiTaskDraftItem]] = None
+
+
+class AiDraftRevisionSnapshotResponse(BaseModel):
+    """One restorable prior bundle snapshot for undo support."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    created_at: datetime
+
+
+class AiDraftSessionRestoreRequest(BaseModel):
+    """Restore bundle from a recent undo snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_id: int
 
 
 class ApprovalAction(BaseModel):

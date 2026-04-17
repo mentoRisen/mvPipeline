@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
 from fastapi import HTTPException
 
 from app.models.ai_draft_session import AiDraftSession, AiDraftSessionStatus
@@ -255,3 +256,165 @@ def test_start_preview_run_rerun_allowed_at_cap(
         draft_session_id=sid,
     )
     assert same_sid == sid
+
+
+def test_finalize_preview_failure_preserves_existing_bundle(tenant, auth_user):
+    sid = ai_draft_session_repo.save_after_preview(
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        brief="keep me",
+        items=[
+            {
+                "task": {
+                    "name": "A",
+                    "template": "instagram_post",
+                    "meta": {},
+                    "post": {},
+                },
+                "jobs": [
+                    {
+                        "generator": "dalle",
+                        "purpose": None,
+                        "prompt": {"prompt": "x"},
+                        "order": 0,
+                    }
+                ],
+                "warnings": [],
+            }
+        ],
+    )
+    ai_draft_session_repo.start_preview_run(
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        brief="rerun",
+        draft_session_id=sid,
+    )
+    ai_draft_session_repo.finalize_preview_failure(
+        draft_session_id=sid,
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        last_error={"error": "upstream", "access_token": "secret-value"},
+    )
+    row = ai_draft_session_repo.get_active_for_user(
+        sid,
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+    )
+    assert row is not None
+    assert row.bundle["items"][0]["task"]["name"] == "A"
+    assert row.last_error["access_token"] == "***redacted***"
+
+
+def test_finalize_preview_success_creates_undo_snapshot(tenant, auth_user):
+    sid = ai_draft_session_repo.save_after_preview(
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        brief="first",
+        items=[
+            {
+                "task": {
+                    "name": "Before",
+                    "template": "instagram_post",
+                    "meta": {},
+                    "post": {},
+                },
+                "jobs": [
+                    {
+                        "generator": "dalle",
+                        "purpose": None,
+                        "prompt": {"prompt": "x"},
+                        "order": 0,
+                    }
+                ],
+                "warnings": [],
+            }
+        ],
+    )
+    ai_draft_session_repo.start_preview_run(
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        brief="second",
+        draft_session_id=sid,
+    )
+    ai_draft_session_repo.finalize_preview_success(
+        draft_session_id=sid,
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        items=[
+            {
+                "task": {
+                    "name": "After",
+                    "template": "instagram_post",
+                    "meta": {},
+                    "post": {},
+                },
+                "jobs": [
+                    {
+                        "generator": "dalle",
+                        "purpose": None,
+                        "prompt": {"prompt": "y"},
+                        "order": 0,
+                    }
+                ],
+                "warnings": [],
+            }
+        ],
+    )
+    snaps = ai_draft_session_repo.list_revision_snapshots(
+        draft_session_id=sid,
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+    )
+    assert len(snaps) >= 1
+    assert snaps[0].bundle["items"][0]["task"]["name"] == "Before"
+
+
+def test_restore_snapshot_bundle_rejects_when_running(tenant, auth_user):
+    sid = ai_draft_session_repo.start_preview_run(
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        brief="running",
+    )
+    with pytest.raises(HTTPException) as exc:
+        ai_draft_session_repo.restore_snapshot_bundle(
+            draft_session_id=sid,
+            snapshot_id=1,
+            tenant_id=tenant.id,
+            user_id=auth_user.id,
+        )
+    assert exc.value.status_code == 409
+
+
+def test_restore_snapshot_bundle_missing_snapshot_404(tenant, auth_user):
+    sid = ai_draft_session_repo.save_after_preview(
+        tenant_id=tenant.id,
+        user_id=auth_user.id,
+        brief="first",
+        items=[
+            {
+                "task": {
+                    "name": "A",
+                    "template": "instagram_post",
+                    "meta": {},
+                    "post": {},
+                },
+                "jobs": [
+                    {
+                        "generator": "dalle",
+                        "purpose": None,
+                        "prompt": {"prompt": "x"},
+                        "order": 0,
+                    }
+                ],
+                "warnings": [],
+            }
+        ],
+    )
+    with pytest.raises(HTTPException) as exc:
+        ai_draft_session_repo.restore_snapshot_bundle(
+            draft_session_id=sid,
+            snapshot_id=99999,
+            tenant_id=tenant.id,
+            user_id=auth_user.id,
+        )
+    assert exc.value.status_code == 404

@@ -21,7 +21,10 @@ from app.models.schedule_rule import ScheduleRule
 from app.models.ai_draft_session import AiDraftPreviewStatus, AiDraftSession
 from app.api.schemas import (
     AiDraftCommunicationEventResponse,
+    AiDraftIterationMode,
+    AiDraftRevisionSnapshotResponse,
     AiDraftSessionDetailResponse,
+    AiDraftSessionRestoreRequest,
     AiDraftSessionPatchRequest,
     AiDraftSessionSummaryResponse,
     AiTaskDraftBundleConfirmRequest,
@@ -159,6 +162,13 @@ def _preview_status_value(row: AiDraftSession) -> str:
     return str(ps)
 
 
+def _session_has_confirmable_bundle(row: AiDraftSession) -> bool:
+    """Allow confirm when the active session still has a valid non-empty bundle."""
+    bundle = row.bundle if isinstance(row.bundle, dict) else {}
+    items = bundle.get("items")
+    return isinstance(items, list) and len(items) > 0
+
+
 def _communication_event_responses(
     events: list,
 ) -> list[AiDraftCommunicationEventResponse]:
@@ -241,7 +251,43 @@ def _active_draft_session_to_detail(row) -> AiDraftSessionDetailResponse:
         updated_at=row.updated_at,
         preview_status=_preview_status_value(row),
         communication_events=_communication_event_responses(events),
+        undo_snapshots=[
+            AiDraftRevisionSnapshotResponse(id=s.id, created_at=s.created_at)
+            for s in ai_draft_session_repo.list_revision_snapshots(
+                draft_session_id=row.id,
+                tenant_id=row.tenant_id,
+                user_id=row.user_id,
+            )
+        ],
     )
+
+
+def _validate_iteration_contract(data: AiTaskDraftRequest) -> None:
+    mode = data.iteration_mode
+    instruction = (data.instruction_text or "").strip()
+    scope = data.target_scope
+    if mode is None and data.instruction_text is None and scope is None:
+        return
+    if data.draft_session_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="draft_session_id is required for follow-up iteration",
+        )
+    if mode not in {AiDraftIterationMode.REGENERATE.value, AiDraftIterationMode.TARGETED_INTENT.value}:
+        raise HTTPException(
+            status_code=422,
+            detail="iteration_mode must be regenerate or targeted_intent",
+        )
+    if not instruction:
+        raise HTTPException(
+            status_code=422,
+            detail="instruction_text is required for follow-up iteration",
+        )
+    if scope not in {"campaign", None}:
+        raise HTTPException(
+            status_code=422,
+            detail="target_scope must be campaign in v1",
+        )
 
 
 # --- Tenant routes ---
@@ -420,6 +466,7 @@ def create_ai_task_draft_preview(
     user: User = Depends(auth_service.get_current_active_user),
 ):
     """Start async AI draft preview; poll ``GET .../ai-draft-sessions/{id}`` for results."""
+    _validate_iteration_contract(data)
     session_id = ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=user.id,
@@ -431,6 +478,9 @@ def create_ai_task_draft_preview(
         tenant_id=tenant.id,
         user_id=user.id,
         brief=data.brief,
+        iteration_mode=data.iteration_mode,
+        instruction_text=data.instruction_text,
+        target_scope=data.target_scope,
     )
     if app_config.AI_DRAFT_PREVIEW_BLOCKING:
         run_ai_draft_preview_job(**job_kwargs)
@@ -445,6 +495,25 @@ def create_ai_task_draft_preview(
         draft_session_id=session_id,
         preview_status=AiDraftPreviewStatus.RUNNING.value,
     )
+
+
+@scoped_router.post(
+    "/tasks/ai-draft-sessions/{session_id}/restore",
+    response_model=AiDraftSessionDetailResponse,
+)
+def restore_ai_draft_session_snapshot(
+    session_id: UUID,
+    body: AiDraftSessionRestoreRequest,
+    tenant: Tenant = Depends(tenant_context_dependency),
+    user: User = Depends(auth_service.get_current_active_user),
+):
+    row = ai_draft_session_repo.restore_snapshot_bundle(
+        draft_session_id=session_id,
+        snapshot_id=body.snapshot_id,
+        tenant_id=tenant.id,
+        user_id=user.id,
+    )
+    return _active_draft_session_to_detail(row)
 
 
 @scoped_router.post(
@@ -469,7 +538,11 @@ def confirm_ai_task_draft(
                 status_code=404,
                 detail="AI draft session not found or already completed",
             )
-        if _preview_status_value(sess) != AiDraftPreviewStatus.SUCCEEDED.value:
+        status_value = _preview_status_value(sess)
+        if (
+            status_value != AiDraftPreviewStatus.SUCCEEDED.value
+            and not _session_has_confirmable_bundle(sess)
+        ):
             raise HTTPException(
                 status_code=404,
                 detail="AI draft session not ready for confirm",

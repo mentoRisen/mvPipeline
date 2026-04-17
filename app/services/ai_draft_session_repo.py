@@ -22,11 +22,15 @@ from app.models.ai_draft_communication_event import (
     AiDraftCommunicationEvent,
     AiDraftCommunicationKind,
 )
+from app.models.ai_draft_revision_snapshot import AiDraftRevisionSnapshot
 from app.models.ai_draft_session import (
     AiDraftSession,
     AiDraftPreviewStatus,
     AiDraftSessionStatus,
 )
+
+UNDO_SNAPSHOT_MAX_PER_SESSION = 3
+REDACTED_PLACEHOLDER = "***redacted***"
 
 
 def _utcnow() -> datetime:
@@ -66,12 +70,26 @@ def assert_communication_payload_within_size(payload: dict[str, Any]) -> None:
         )
 
 
-def _delete_communication_events_for_session(db: Session, draft_session_id: UUID) -> None:
-    db.execute(
-        delete(AiDraftCommunicationEvent).where(
-            AiDraftCommunicationEvent.draft_session_id == draft_session_id
-        )
-    )
+def _sanitize_secret_like_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, raw in value.items():
+            key_l = str(key).lower()
+            if any(
+                token in key_l
+                for token in ("token", "password", "secret", "authorization", "api_key")
+            ):
+                sanitized[key] = REDACTED_PLACEHOLDER
+            else:
+                sanitized[key] = _sanitize_secret_like_values(raw)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_secret_like_values(v) for v in value]
+    if isinstance(value, str):
+        lowered = value.lower()
+        if "bearer " in lowered or "sk-" in lowered:
+            return REDACTED_PLACEHOLDER
+    return value
 
 
 def _next_communication_sequence(db: Session, draft_session_id: UUID) -> int:
@@ -95,6 +113,7 @@ def append_communication_event(
 ) -> None:
     """Append one transcript row; visible to poll clients after commit."""
 
+    payload = _sanitize_secret_like_values(payload)
     assert_communication_payload_within_size(payload)
     now = _utcnow()
     with Session(engine) as db:
@@ -238,9 +257,9 @@ def start_preview_run(
                     status_code=409,
                     detail="AI draft preview already in progress for this session",
                 )
-            _delete_communication_events_for_session(db, draft_session_id)
             row.brief = brief
-            row.bundle = {"items": []}
+            if row.bundle is None:
+                row.bundle = {"items": []}
             row.last_error = None
             row.preview_status = AiDraftPreviewStatus.RUNNING
             row.expires_at = exp
@@ -307,6 +326,7 @@ def finalize_preview_success(
             return
         if _preview_status_key(row) != AiDraftPreviewStatus.RUNNING.value:
             return
+        _snapshot_current_bundle(db=db, row=row)
         row.bundle = bundle
         row.preview_status = AiDraftPreviewStatus.SUCCEEDED
         row.last_error = None
@@ -323,7 +343,7 @@ def finalize_preview_failure(
     user_id: UUID,
     last_error: dict[str, Any],
 ) -> None:
-    """Mark preview FAILED and clear bundle items."""
+    """Mark preview FAILED while preserving current bundle."""
 
     now = _utcnow()
     with Session(engine) as db:
@@ -339,12 +359,107 @@ def finalize_preview_failure(
         if _preview_status_key(row) != AiDraftPreviewStatus.RUNNING.value:
             return
         row.preview_status = AiDraftPreviewStatus.FAILED
-        row.last_error = last_error
-        row.bundle = {"items": []}
+        row.last_error = _sanitize_secret_like_values(last_error)
         row.expires_at = _default_expires_at()
         row.updated_at = now
         db.add(row)
         db.commit()
+
+
+def _snapshot_current_bundle(*, db: Session, row: AiDraftSession) -> None:
+    current_bundle = row.bundle if isinstance(row.bundle, dict) else {"items": []}
+    existing_items = current_bundle.get("items")
+    if not isinstance(existing_items, list) or len(existing_items) == 0:
+        return
+    snap = AiDraftRevisionSnapshot(
+        draft_session_id=row.id,
+        tenant_id=row.tenant_id,
+        user_id=row.user_id,
+        bundle=current_bundle,
+        created_at=_utcnow(),
+    )
+    db.add(snap)
+    db.flush()
+    q = (
+        select(AiDraftRevisionSnapshot)
+        .where(AiDraftRevisionSnapshot.draft_session_id == row.id)
+        .order_by(AiDraftRevisionSnapshot.created_at.desc())
+    )
+    snaps = list(db.exec(q).all())
+    for stale in snaps[UNDO_SNAPSHOT_MAX_PER_SESSION:]:
+        db.delete(stale)
+
+
+def list_revision_snapshots(
+    *,
+    draft_session_id: UUID,
+    tenant_id: UUID,
+    user_id: UUID,
+) -> list[AiDraftRevisionSnapshot]:
+    now = _utcnow()
+    with Session(engine) as db:
+        row = db.get(AiDraftSession, draft_session_id)
+        if (
+            row is None
+            or row.tenant_id != tenant_id
+            or row.user_id != user_id
+            or row.status != AiDraftSessionStatus.ACTIVE
+            or row.expires_at <= now
+        ):
+            return []
+        q = (
+            select(AiDraftRevisionSnapshot)
+            .where(AiDraftRevisionSnapshot.draft_session_id == draft_session_id)
+            .order_by(AiDraftRevisionSnapshot.created_at.desc())
+        )
+        return list(db.exec(q).all())
+
+
+def restore_snapshot_bundle(
+    *,
+    draft_session_id: UUID,
+    snapshot_id: int,
+    tenant_id: UUID,
+    user_id: UUID,
+) -> AiDraftSession:
+    now = _utcnow()
+    with Session(engine) as db:
+        row = db.get(AiDraftSession, draft_session_id)
+        if (
+            row is None
+            or row.tenant_id != tenant_id
+            or row.user_id != user_id
+            or row.status != AiDraftSessionStatus.ACTIVE
+            or row.expires_at <= now
+        ):
+            raise HTTPException(status_code=404, detail="AI draft session not found")
+        if _preview_status_key(row) == AiDraftPreviewStatus.RUNNING.value:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot restore draft while AI preview is in progress",
+            )
+        snapshot = db.exec(
+            select(AiDraftRevisionSnapshot).where(
+                AiDraftRevisionSnapshot.id == snapshot_id,
+                AiDraftRevisionSnapshot.draft_session_id == draft_session_id,
+                AiDraftRevisionSnapshot.tenant_id == tenant_id,
+                AiDraftRevisionSnapshot.user_id == user_id,
+            )
+        ).first()
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Undo snapshot not found")
+        row.bundle = (
+            snapshot.bundle if isinstance(snapshot.bundle, dict) else {"items": []}
+        )
+        row.last_error = None
+        row.preview_status = AiDraftPreviewStatus.SUCCEEDED
+        row.updated_at = now
+        row.expires_at = _default_expires_at()
+        db.delete(snapshot)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
 
 
 def save_after_preview(
