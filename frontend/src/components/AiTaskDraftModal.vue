@@ -370,7 +370,7 @@
               <span class="ai-draft-ev-kind">{{ ev.kind }}</span>
               <span class="ai-draft-ev-seq">#{{ ev.sequence }} · {{ formatTranscriptTime(ev.created_at) }}</span>
             </div>
-            <pre class="ai-draft-ev-payload">{{ formatTranscriptPayload(ev) }}</pre>
+            <pre class="ai-draft-ev-payload" v-html="formatTranscriptPayloadHtml(ev)"></pre>
           </div>
         </aside>
       </div>
@@ -380,6 +380,7 @@
 
 <script>
 import { taskService } from '../services/api'
+import { formatAiDraftTranscriptPayloadHtml } from './aiDraftTranscriptFormatting.js'
 
 function emptyDraftJob() {
   return {
@@ -736,12 +737,8 @@ export default {
       }
       this.communicationEvents = [...events].sort((a, b) => a.sequence - b.sequence)
     },
-    formatTranscriptPayload(ev) {
-      try {
-        return JSON.stringify(ev.payload, null, 2)
-      } catch {
-        return String(ev.payload)
-      }
+    formatTranscriptPayloadHtml(ev) {
+      return formatAiDraftTranscriptPayloadHtml(ev?.payload)
     },
     formatTranscriptTime(value) {
       if (!value) return '-'
@@ -1151,6 +1148,11 @@ export default {
   word-break: break-word;
   max-height: 12rem;
   overflow: auto;
+}
+
+/* Decoded JSON (was a JSON string before formatting) — highlight only that subtree */
+.ai-draft-ev-payload :deep(.ai-draft-ev-payload-json-expanded) {
+  color: var(--color-warning, #f59e0b);
 }
 
 .ai-draft-resume-card {
