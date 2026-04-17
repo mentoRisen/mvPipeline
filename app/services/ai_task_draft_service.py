@@ -109,6 +109,12 @@ class AiTaskDraftService:
             try:
                 items.append(self._normalize_item(item_dict))
             except AiTaskDraftValidationError as exc:
+                if isinstance(exc, AiTaskDraftItemValidationError):
+                    raise AiTaskDraftItemValidationError(
+                        str(exc),
+                        item_index=idx,
+                        field=exc.field,
+                    ) from exc
                 raise AiTaskDraftItemValidationError(
                     str(exc), item_index=idx
                 ) from exc
@@ -131,6 +137,12 @@ class AiTaskDraftService:
             try:
                 normalized.append(self._normalize_item(item.model_dump()))
             except AiTaskDraftValidationError as exc:
+                if isinstance(exc, AiTaskDraftItemValidationError):
+                    raise AiTaskDraftItemValidationError(
+                        str(exc),
+                        item_index=idx,
+                        field=exc.field,
+                    ) from exc
                 raise AiTaskDraftItemValidationError(
                     str(exc), item_index=idx
                 ) from exc
@@ -175,6 +187,30 @@ class AiTaskDraftService:
         try:
             preview = AiTaskDraftItem.model_validate(raw_draft)
         except ValidationError as exc:
+            issue = exc.errors()[0] if exc.errors() else None
+            if issue:
+                loc = ".".join(str(part) for part in issue.get("loc", ()))
+                msg = issue.get("msg", "Invalid structured data")
+                value = issue.get("input")
+                if issue.get("type") == "extra_forbidden":
+                    rendered_value = repr(value)
+                    if len(rendered_value) > 160:
+                        rendered_value = f"{rendered_value[:157]}..."
+                    explicit = (
+                        f"Unexpected field `{loc}` is not allowed"
+                        if loc
+                        else "Unexpected field is not allowed"
+                    )
+                    if value is not None:
+                        explicit = f"{explicit}; received value {rendered_value}"
+                    raise AiTaskDraftItemValidationError(
+                        f"AI draft preview returned invalid structured data: {explicit}",
+                        field=loc or None,
+                    ) from exc
+                raise AiTaskDraftItemValidationError(
+                    f"AI draft preview returned invalid structured data: {msg}",
+                    field=loc or None,
+                ) from exc
             raise AiTaskDraftValidationError(
                 "AI draft preview returned invalid structured data"
             ) from exc

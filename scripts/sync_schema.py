@@ -44,6 +44,14 @@ REQUIRED_TABLE_COLUMNS = {
         "payload",
         "created_at",
     },
+    "ai_draft_revision_snapshots": {
+        "id",
+        "draft_session_id",
+        "tenant_id",
+        "user_id",
+        "bundle",
+        "created_at",
+    },
 }
 
 ADD_COLUMN_DDL = {

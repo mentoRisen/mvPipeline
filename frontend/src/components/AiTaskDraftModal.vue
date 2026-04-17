@@ -29,7 +29,31 @@
         :class="{ 'ai-draft-layout-split': showTranscriptColumn }"
       >
         <div class="ai-draft-main">
+      <div v-if="generating" class="ai-draft-main-overlay" aria-live="polite" aria-busy="true">
+        <div class="ai-draft-overlay-card">
+          <span class="ai-draft-overlay-spinner" aria-hidden="true"></span>
+          <span>AI is generating draft updates...</span>
+        </div>
+      </div>
       <div v-if="!bundle" class="ai-draft-step">
+        <div v-if="draftSessionId" class="card ai-draft-resume-card">
+          <h4 class="ai-draft-resume-title">Refine existing draft</h4>
+          <div class="form-group">
+            <label>Iteration mode</label>
+            <select v-model="iterationMode" :disabled="generating">
+              <option value="regenerate">Regenerate whole campaign</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Follow-up instruction <span class="required">*</span></label>
+            <textarea
+              v-model="instructionText"
+              rows="4"
+              :disabled="generating"
+              placeholder="Example: keep the same concept but make tone more playful."
+            ></textarea>
+          </div>
+        </div>
         <div class="form-group">
           <label>Brief <span class="required">*</span></label>
           <textarea
@@ -96,6 +120,86 @@
       </div>
 
       <div v-else class="ai-draft-step">
+        <div class="form-actions ai-draft-bundle-actions ai-draft-bundle-actions-top">
+          <button
+            type="button"
+            class="btn-secondary"
+            :disabled="confirming || generating || !draftSessionId"
+            @click="showFollowUpForm = true"
+          >
+            Add follow-up instruction
+          </button>
+          <button
+            type="button"
+            class="btn-secondary"
+            :disabled="confirming || generating || !undoSnapshots.length"
+            @click="restoreLatestSnapshot"
+          >
+            Undo last AI change
+          </button>
+          <button
+            type="button"
+            class="btn-secondary"
+            :disabled="confirming"
+            @click="discardDraft"
+          >
+            Back
+          </button>
+          <button
+            type="button"
+            class="btn-danger"
+            :disabled="confirming || generating || !draftSessionId"
+            @click="discardSavedDraft"
+          >
+            Discard saved draft
+          </button>
+          <button
+            type="button"
+            class="btn-primary"
+            :disabled="confirming || !canConfirm"
+            @click="confirmDraft"
+          >
+            {{ confirming ? 'Creating…' : confirmButtonLabel }}
+          </button>
+        </div>
+
+        <div v-if="showFollowUpForm && draftSessionId" class="card ai-draft-resume-card">
+          <h4 class="ai-draft-resume-title">Refine existing draft</h4>
+          <div class="form-group">
+            <label>Iteration mode</label>
+            <select v-model="iterationMode" :disabled="generating || confirming">
+              <option value="regenerate">Regenerate whole campaign</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Follow-up instruction <span class="required">*</span></label>
+            <textarea
+              v-model="instructionText"
+              rows="4"
+              :disabled="generating || confirming"
+              placeholder="Example: keep the same concept but make tone more playful."
+            ></textarea>
+          </div>
+          <div class="form-actions">
+            <button
+              type="button"
+              class="btn-secondary"
+              :disabled="generating || confirming"
+              @click="showFollowUpForm = false"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="generating || confirming || !instructionText.trim()"
+              @click="generateDraft"
+            >
+              {{ generating ? 'Generating…' : 'Run follow-up' }}
+            </button>
+          </div>
+        </div>
+
         <div class="ai-draft-summary card">
           <h4>Bundle summary</h4>
           <p class="ai-draft-summary-line">
@@ -246,32 +350,6 @@
           </div>
         </div>
 
-        <div class="form-actions ai-draft-bundle-actions">
-          <button
-            type="button"
-            class="btn-secondary"
-            :disabled="confirming"
-            @click="discardDraft"
-          >
-            Back
-          </button>
-          <button
-            type="button"
-            class="btn-danger"
-            :disabled="confirming || !draftSessionId"
-            @click="discardSavedDraft"
-          >
-            Discard saved draft
-          </button>
-          <button
-            type="button"
-            class="btn-primary"
-            :disabled="confirming || !canConfirm"
-            @click="confirmDraft"
-          >
-            {{ confirming ? 'Creating…' : confirmButtonLabel }}
-          </button>
-        </div>
       </div>
         </div>
 
@@ -284,13 +362,13 @@
             Waiting for first events…
           </div>
           <div
-            v-for="ev in communicationEvents"
+            v-for="ev in transcriptEventsNewestFirst"
             :key="`ev-${ev.sequence}`"
             class="ai-draft-transcript-block"
           >
             <div class="ai-draft-transcript-meta">
               <span class="ai-draft-ev-kind">{{ ev.kind }}</span>
-              <span class="ai-draft-ev-seq">#{{ ev.sequence }}</span>
+              <span class="ai-draft-ev-seq">#{{ ev.sequence }} · {{ formatTranscriptTime(ev.created_at) }}</span>
             </div>
             <pre class="ai-draft-ev-payload">{{ formatTranscriptPayload(ev) }}</pre>
           </div>
@@ -369,6 +447,12 @@ export default {
       autosaveTimer: null,
       communicationEvents: [],
       previewPollTimer: null,
+      previewPollInFlight: false,
+      asyncStateVersion: 0,
+      iterationMode: 'regenerate',
+      instructionText: '',
+      undoSnapshots: [],
+      showFollowUpForm: false,
     }
   },
   computed: {
@@ -405,6 +489,10 @@ export default {
       const n = this.bundle?.items?.length || 0
       if (n <= 1) return 'Create task'
       return `Create ${n} tasks`
+    },
+    transcriptEventsNewestFirst() {
+      if (!Array.isArray(this.communicationEvents)) return []
+      return [...this.communicationEvents].sort((a, b) => b.sequence - a.sequence)
     },
   },
   watch: {
@@ -461,6 +549,7 @@ export default {
       this.expandedTasks = {}
       this.error = null
       this.communicationEvents = []
+      this.showFollowUpForm = false
     },
     clearDraftSessionIdForNewPreview() {
       this.draftSessionId = null
@@ -481,8 +570,12 @@ export default {
         this.flushAutosave()
       }, 750)
     },
-    async flushAutosave() {
-      if (!this.draftSessionId || !this.bundle?.items?.length || this.confirming || this.generating) {
+    async flushAutosave(options = {}) {
+      const { force = false } = options
+      if (!this.draftSessionId || !this.bundle?.items?.length || this.confirming) {
+        return
+      }
+      if (!force && this.generating) {
         return
       }
       try {
@@ -519,11 +612,14 @@ export default {
       this.error = null
       this.generating = true
       let leaveGeneratingForPoll = false
+      const stateVersion = this.asyncStateVersion
       try {
         const data = await taskService.getAiDraftSession(sessionId)
+        if (stateVersion !== this.asyncStateVersion) return
         this.draftSessionId = data.id
         this.brief = data.brief || ''
         this.setCommunicationEventsFromApi(data.communication_events)
+        this.undoSnapshots = Array.isArray(data.undo_snapshots) ? data.undo_snapshots : []
         if (data.preview_status === 'running') {
           this.bundle = null
           this.error = null
@@ -535,6 +631,7 @@ export default {
         const items = (data.items || []).map((item, i) => this.normalizeItem(item, i))
         this.bundle = { items }
         this.expandedTasks = {}
+        this.showFollowUpForm = false
         if (data.last_error) {
           this.error = formatDraftErrorDetail(data.last_error)
         }
@@ -555,8 +652,15 @@ export default {
       }
     },
     async discardSavedDraft() {
-      if (!this.draftSessionId || this.confirming) return
+      if (!this.draftSessionId || this.confirming || this.generating) return
+      const confirmed = window.confirm(
+        'Discard this saved draft? This action cannot be undone.'
+      )
+      if (!confirmed) return
       const id = this.draftSessionId
+      this.asyncStateVersion += 1
+      this.abortPreviewRequest()
+      this.stopPreviewPolling()
       try {
         await taskService.deleteAiDraftSession(id)
       } catch (error) {
@@ -574,6 +678,11 @@ export default {
       this.bundle = null
       this.expandedTasks = {}
       this.error = null
+      this.communicationEvents = []
+      this.undoSnapshots = []
+      this.showFollowUpForm = false
+      this.instructionText = ''
+      this.iterationMode = 'regenerate'
       await this.loadResumableSessions()
     },
     toggleExpanded(taskIndex) {
@@ -599,15 +708,26 @@ export default {
     },
     stopPreviewPolling() {
       if (this.previewPollTimer) {
-        clearInterval(this.previewPollTimer)
+        clearTimeout(this.previewPollTimer)
         this.previewPollTimer = null
       }
+      this.previewPollInFlight = false
+    },
+    scheduleNextPreviewPoll(delayMs = 900) {
+      if (this.previewPollTimer || !this.draftSessionId || !this.generating) {
+        return
+      }
+      this.previewPollTimer = setTimeout(async () => {
+        this.previewPollTimer = null
+        await this.pollDraftSession()
+        if (this.generating && this.draftSessionId) {
+          this.scheduleNextPreviewPoll()
+        }
+      }, delayMs)
     },
     startPreviewPolling() {
       this.stopPreviewPolling()
-      this.previewPollTimer = setInterval(() => {
-        this.pollDraftSession()
-      }, 900)
+      this.scheduleNextPreviewPoll(0)
     },
     setCommunicationEventsFromApi(events) {
       if (!Array.isArray(events)) {
@@ -623,10 +743,22 @@ export default {
         return String(ev.payload)
       }
     },
+    formatTranscriptTime(value) {
+      if (!value) return '-'
+      const d = new Date(value)
+      if (Number.isNaN(d.getTime())) return '-'
+      return d.toLocaleString()
+    },
     async pollDraftSession() {
-      if (!this.draftSessionId || !this.tenantId) return
+      if (!this.draftSessionId || !this.tenantId || this.previewPollInFlight) return
+      this.previewPollInFlight = true
+      const sessionId = this.draftSessionId
+      const stateVersion = this.asyncStateVersion
       try {
-        const data = await taskService.getAiDraftSession(this.draftSessionId)
+        const data = await taskService.getAiDraftSession(sessionId)
+        if (stateVersion !== this.asyncStateVersion || sessionId !== this.draftSessionId) {
+          return
+        }
         this.setCommunicationEventsFromApi(data.communication_events)
         if (data.preview_status === 'running') {
           return
@@ -635,16 +767,22 @@ export default {
         this.generating = false
         this.previewAbortController = null
         if (data.preview_status === 'failed') {
-          this.bundle = null
+          if (!this.bundle?.items?.length) {
+            this.bundle = null
+          }
           this.error =
             formatDraftErrorDetail(data.last_error) || 'AI preview failed.'
+          this.undoSnapshots = Array.isArray(data.undo_snapshots) ? data.undo_snapshots : []
+          this.showFollowUpForm = false
           await this.loadResumableSessions()
           return
         }
         this.error = null
         const items = (data.items || []).map((item, i) => this.normalizeItem(item, i))
         this.bundle = { items }
+        this.undoSnapshots = Array.isArray(data.undo_snapshots) ? data.undo_snapshots : []
         this.expandedTasks = {}
+        this.showFollowUpForm = false
         await this.loadResumableSessions()
       } catch (error) {
         if (error?.response?.status === 401) {
@@ -654,6 +792,8 @@ export default {
           return
         }
         /* Keep polling on transient errors */
+      } finally {
+        this.previewPollInFlight = false
       }
     },
     normalizeItem(rawItem, index) {
@@ -721,42 +861,64 @@ export default {
 
       this.error = null
       this.communicationEvents = []
-      this.generating = true
-      const controller = new AbortController()
-      this.previewAbortController = controller
       let keepGenerating = false
+      let controller = null
+      const stateVersion = this.asyncStateVersion
 
       try {
         const payload = { brief: this.trimmedBrief }
         if (this.draftSessionId) {
+          const followUpInstruction = this.instructionText.trim()
+          if (!followUpInstruction) {
+            this.error = 'Enter a follow-up instruction first.'
+            return
+          }
           payload.draft_session_id = this.draftSessionId
+          payload.iteration_mode = this.iterationMode
+          payload.instruction_text = followUpInstruction
+          payload.target_scope = 'campaign'
+
+          // Prevent lost updates: flush any pending local edits before iteration snapshotting.
+          this.clearAutosaveTimer()
+          await this.flushAutosave({ force: true })
         }
+        this.generating = true
+        controller = new AbortController()
+        this.previewAbortController = controller
         const data = await taskService.previewAiTaskDraft(payload, {
           signal: controller.signal,
         })
+        if (stateVersion !== this.asyncStateVersion) return
         if (data.draft_session_id) {
           this.draftSessionId = data.draft_session_id
         }
         this.setCommunicationEventsFromApi(data.communication_events)
+        this.undoSnapshots = Array.isArray(data.undo_snapshots) ? data.undo_snapshots : this.undoSnapshots
 
         if (data.preview_status === 'running') {
           keepGenerating = true
           this.startPreviewPolling()
+          this.showFollowUpForm = false
           await this.loadResumableSessions()
           return
         }
 
         if (data.preview_status === 'failed') {
-          this.bundle = null
+          if (!this.bundle?.items?.length) {
+            this.bundle = null
+          }
           this.error =
             formatDraftErrorDetail(data.last_error) || 'AI preview failed.'
+          this.showFollowUpForm = false
           await this.loadResumableSessions()
           return
         }
 
         const items = (data.items || []).map((item, i) => this.normalizeItem(item, i))
         this.bundle = { items }
+        this.undoSnapshots = Array.isArray(data.undo_snapshots) ? data.undo_snapshots : this.undoSnapshots
         this.expandedTasks = {}
+        this.showFollowUpForm = false
         await this.loadResumableSessions()
       } catch (error) {
         if (this.isRequestCanceled(error)) return
@@ -769,7 +931,7 @@ export default {
           error?.message ||
           'Failed to generate AI draft.'
       } finally {
-        if (this.previewAbortController === controller) {
+        if (controller && this.previewAbortController === controller) {
           this.previewAbortController = null
         }
         if (!keepGenerating) {
@@ -817,7 +979,25 @@ export default {
         this.confirming = false
       }
     },
+    async restoreLatestSnapshot() {
+      if (!this.draftSessionId || !this.undoSnapshots.length || this.confirming || this.generating) return
+      const latest = this.undoSnapshots[0]
+      try {
+        const data = await taskService.restoreAiDraftSessionSnapshot(this.draftSessionId, latest.id)
+        this.error = null
+        this.setCommunicationEventsFromApi(data.communication_events)
+        this.undoSnapshots = Array.isArray(data.undo_snapshots) ? data.undo_snapshots : []
+        const items = (data.items || []).map((item, i) => this.normalizeItem(item, i))
+        this.bundle = { items }
+      } catch (error) {
+        this.error =
+          formatDraftErrorDetail(error?.response?.data?.detail) ||
+          error?.message ||
+          'Failed to restore previous revision.'
+      }
+    },
     resetState() {
+      this.asyncStateVersion += 1
       this.stopPreviewPolling()
       this.brief = ''
       this.bundle = null
@@ -826,9 +1006,14 @@ export default {
       this.generating = false
       this.confirming = false
       this.previewAbortController = null
+      this.previewPollInFlight = false
       this.draftSessionId = null
       this.resumableSessions = []
       this.communicationEvents = []
+      this.iterationMode = 'regenerate'
+      this.instructionText = ''
+      this.undoSnapshots = []
+      this.showFollowUpForm = false
     },
   },
 }
@@ -844,11 +1029,58 @@ export default {
   display: block;
 }
 
+.ai-draft-main {
+  position: relative;
+}
+
 .ai-draft-layout-split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(22rem, 34rem);
   gap: 1.25rem;
   align-items: start;
+}
+
+.ai-draft-main-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(1px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: all;
+}
+
+.ai-draft-overlay-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 1rem;
+  border-radius: 0.6rem;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+.ai-draft-overlay-spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border: 2px solid #bfdbfe;
+  border-top-color: #2563eb;
+  border-radius: 9999px;
+  animation: ai-draft-spin 0.8s linear infinite;
+}
+
+@keyframes ai-draft-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 960px) {
@@ -981,6 +1213,49 @@ export default {
 .ai-draft-bundle-actions {
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.ai-draft-bundle-actions-top {
+  margin-bottom: 0.5rem;
+}
+
+.ai-draft-bundle-actions .btn-secondary {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+}
+
+.ai-draft-bundle-actions .btn-secondary:hover:not(:disabled) {
+  background: #e0e7ff;
+}
+
+.ai-draft-bundle-actions .btn-danger {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.ai-draft-bundle-actions .btn-danger:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.ai-draft-bundle-actions .btn-primary {
+  background: #2563eb;
+  border-color: #1d4ed8;
+  color: #ffffff;
+}
+
+.ai-draft-bundle-actions .btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.ai-draft-bundle-actions .btn-secondary:disabled,
+.ai-draft-bundle-actions .btn-danger:disabled,
+.ai-draft-bundle-actions .btn-primary:disabled {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+  color: #9ca3af;
+  cursor: not-allowed;
 }
 
 .ai-draft-header {

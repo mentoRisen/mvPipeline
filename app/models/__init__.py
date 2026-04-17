@@ -15,6 +15,7 @@ from app.models.ai_draft_session import (
     AiDraftSessionStatus,
     AiDraftPreviewStatus,
 )
+from app.models.ai_draft_revision_snapshot import AiDraftRevisionSnapshot
 
 __all__ = [
     "Tenant",
@@ -31,4 +32,5 @@ __all__ = [
     "AiDraftPreviewStatus",
     "AiDraftCommunicationEvent",
     "AiDraftCommunicationKind",
+    "AiDraftRevisionSnapshot",
 ]
