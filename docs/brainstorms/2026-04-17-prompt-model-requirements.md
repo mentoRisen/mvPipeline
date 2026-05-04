@@ -15,7 +15,7 @@ Task-creation and related AI flows need tenant-specific instruction text that op
 
 - R1. The product must persist prompt records that belong to exactly one tenant (same tenant-scoping expectations as tasks and other tenant-bound data).
 - R2. Each prompt record must carry: a **name** (short string for list identification), a **type** (categorical), the **tenant** it belongs to, and **long-form text** (the prompt body). **Names are not required to be unique** within a tenant; users may disambiguate using type, timestamps, or body preview when duplicates occur.
-- R3. The **type** field must be presented in the UI as a select. For this release the select has a single option: stored value `task-creation`, label **Tasks Creation**. The interaction model must allow adding more type options later without changing the core meaning of R2.
+- R3. The **type** field must be presented in the UI as a select. For this release the select includes: stored value `task-creation`, label **Tasks Creation**; and stored value `master-prompt`, label **Master Prompt**. The interaction model must allow adding more type options later without changing the core meaning of R2.
 
 **Administration**
 
@@ -36,7 +36,7 @@ Task-creation and related AI flows need tenant-specific instruction text that op
 ## Scope Boundaries
 
 - **Out of scope for this slice:** Automatically using stored prompt text inside the AI task-creation LLM call path (may follow as a separate change once content exists).
-- **Out of scope:** Additional prompt types beyond **Tasks Creation** until product adds the next select option (model and UI should not hard-block that).
+- **Out of scope:** Additional prompt types beyond **Tasks Creation** and **Master Prompt** until product adds the next select option (model and UI should not hard-block that).
 
 ## Key Decisions
 

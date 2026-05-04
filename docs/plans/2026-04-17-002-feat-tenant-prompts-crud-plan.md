@@ -22,7 +22,7 @@ Operators need in-product, tenant-scoped storage for long instruction text (star
 |----|-------------|
 | R1 | Prompt rows belong to exactly one tenant |
 | R2 | Fields: name, type, tenant, long-form body; duplicate names per tenant allowed |
-| R3 | Type is categorical; v1 single option `task-creation` / label **Tasks Creation**; extensible for more types |
+| R3 | Type is categorical; v1 options `task-creation` (label **Tasks Creation**) and `master-prompt` (label **Master Prompt**); further types extend the same `PromptType` enum + UI select without changing R2 |
 | R4 | Authenticated CRUD in current tenant context |
 | R5 | Multiple rows per tenant per type |
 | R6 | Header link next to **Tasks** to prompt management |
@@ -31,12 +31,12 @@ Operators need in-product, tenant-scoped storage for long instruction text (star
 
 - **In scope:** SQLModel table, repo helpers, scoped API routes, Pydantic schemas, schema sync, frontend list/create/edit/delete, nav link.
 - **Out of scope:** Wiring stored prompts into `OpenAITextDraftAdapter` / `AiTaskDraftService` or any LLM call.
-- **Out of scope:** New prompt types beyond `task-creation` until product adds them (code should not block adding enum + select options later).
+- **Out of scope:** New prompt types beyond `task-creation` and `master-prompt` until product adds them (extend `PromptType` and the Vue type select when needed; keep API enum validation strict).
 
 ## Planning Resolutions (from brainstorm deferrals)
 
 - **Nav label:** **Prompts**; route path **`/prompts`** (adjacent to `/` Tasks in `frontend/src/main.js` and `frontend/src/App.vue`).
-- **List UX:** Sort by **`updated_at` descending**; each row shows **name**, type label (**Tasks Creation**), **truncated body preview** (~120 chars), and **updated** time.
+- **List UX:** Sort by **`updated_at` descending**; each row shows **name**, type label (e.g. **Tasks Creation**, **Master Prompt** per stored type), **truncated body preview** (~120 chars), and **updated** time.
 - **Name validation:** Required after trim; reject empty; **max length 200** characters (adjust in implementation if product wants longer). No uniqueness constraint.
 
 ## Context & Research
@@ -62,7 +62,7 @@ Operators need in-product, tenant-scoped storage for long instruction text (star
 ## Key Technical Decisions
 
 - **Table name:** `prompts` (plural, consistent with `tasks`, `tenants`).
-- **Type representation:** Python `Enum` (e.g. `PromptType`) with string values; first member `task_creation` → stored value `task-creation` (match UI label mapping in frontend). API accepts only known enum values; extend enum when adding types.
+- **Type representation:** Python `Enum` (`PromptType`) with string values; `task_creation` → `task-creation`, `master_prompt` → `master-prompt` (labels **Tasks Creation** and **Master Prompt** in the frontend select). API accepts only known enum values; add enum members and select options together when introducing new types.
 - **Long text column:** SQLAlchemy `Text` for the body so MySQL/SQLite tests behave predictably for long content.
 - **404 vs 403 for cross-tenant access:** Mirror `_task_for_current_tenant_or_404` — if a prompt exists but `prompt.tenant_id != tenant.id`, return **404** to avoid leaking existence.
 - **REST shape:** `GET /prompts`, `POST /prompts`, `GET /prompts/{id}`, `PUT /prompts/{id}`, `DELETE /prompts/{id}` under `/api/v1` (scoped).
@@ -138,7 +138,7 @@ Operators need in-product, tenant-scoped storage for long instruction text (star
   - `frontend/src/views/PromptsView.vue` (new)
   - `frontend/src/main.js` (modify — route `/prompts`)
   - `frontend/src/App.vue` (modify — `<router-link>` after Tasks)
-- **Approach:** List with add button; create/edit form with fields name (text), type (select: one option), body (textarea); delete with confirm; handle missing tenant (show message, disable mutations — align with how task flows behave when `tenantStore` has no id). Use existing styles (`btn-pink`, cards) from `frontend/src/style.css` / sibling views.
+- **Approach:** List with add button; create/edit form with fields name (text), type (select: one row per `PromptType` value), body (textarea); delete with confirm; handle missing tenant (show message, disable mutations — align with how task flows behave when `tenantStore` has no id). Use existing styles (`btn-pink`, cards) from `frontend/src/style.css` / sibling views.
 - **Patterns to follow:** `frontend/src/views/TasksView.vue` / `TaskList.vue` for loading patterns; `api.js` for HTTP.
 - **Test scenarios:**
   - **Preferred:** Small frontend unit test if the repo has a pattern for exercising a formatter or store (e.g. preview truncation helper). If no suitable seam exists without heavy mount setup, document **manual verification**: load `/prompts`, CRUD roundtrip with tenant selected.

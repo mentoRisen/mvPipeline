@@ -14,7 +14,7 @@ Includes:
 
 Written for Ubuntu 24.04 LTS and domain `flow.mentoverse.eu`.
 
-Code under `/opt/mvPipeline` stays owned by `deployer`. You edit in place; **backend** changes need an API/worker restart; **frontend** changes are picked up by Vite without `npm run build` or rsync.
+Code under `/opt/mvPipeline` stays owned by `deployer`. You edit in place; **backend** changes need an API/worker restart; **frontend** changes are picked up by Vite without `npm run build` or rsync. Pulls that add or change **SQLModel tables** (for example new entities such as tenant `prompts`) also need a **schema sync** on the server—see **§12.0** below.
 
 ## 1) Target Topology
 
@@ -405,6 +405,18 @@ curl -sS https://flow.mentoverse.eu/health
 
 Pull dependencies and restart **backend** services when Python or env changes; restart **frontend** when Node dependencies change. No static rsync for normal dev.
 
+### 12.0) Database schema (SQLModel)
+
+When `git pull` brings in new or altered ORM models (new tables/columns), apply metadata to MySQL **before** relying on routes that hit those tables. From `/opt/mvPipeline` with the venv active and `DATABASE_URL` set in `.env`:
+
+```bash
+cd /opt/mvPipeline
+source venv/bin/activate
+python scripts/sync_schema.py
+```
+
+Use `python scripts/sync_schema.py --check-only` if you only want verification without DDL: it asserts tables/columns listed in `scripts/sync_schema.py` (AI draft artifacts and `prompts`) exist. Omit `--check-only` to run `SQLModel.metadata.create_all` first (additive), then the same checks. The script does not replace full migration tooling for destructive changes.
+
 ```bash
 ssh deployer@flow.mentoverse.eu <<'EOF'
 set -euo pipefail
@@ -412,6 +424,7 @@ cd /opt/mvPipeline
 git pull --ff-only
 source venv/bin/activate
 pip install -r requirements.txt
+python scripts/sync_schema.py
 cd frontend
 npm ci
 sudo systemctl restart mvpipeline-api.service
@@ -444,6 +457,7 @@ You would temporarily point Nginx `location /` at `root /var/www/flow.mentoverse
 
 ## 13) Operational Notes
 
+- After pulls that change the SQLModel surface, run `python scripts/sync_schema.py` (see §12.0) so MySQL stays aligned; then restart API/worker if you have not already.
 - Override sensitive settings through `/opt/mvPipeline/.env` on the server.
 - Back up at minimum:
   - MySQL database (daily dump)
