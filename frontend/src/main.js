@@ -4,6 +4,7 @@ import App from './App.vue'
 import TasksView from './views/TasksView.vue'
 import TenantsView from './views/TenantsView.vue'
 import SchedulerView from './views/SchedulerView.vue'
+import PromptsView from './views/PromptsView.vue'
 import TaskDetail from './components/TaskDetail.vue'
 import LoginView from './views/LoginView.vue'
 import { authStore } from './authStore'
@@ -13,6 +14,7 @@ const routes = [
   { path: '/', component: TasksView },
   { path: '/tenants', component: TenantsView },
   { path: '/scheduler', component: SchedulerView },
+  { path: '/prompts', component: PromptsView },
   { path: '/tasks/:id', component: TaskDetail, props: true },
   {
     path: '/login',

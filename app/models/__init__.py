@@ -16,6 +16,7 @@ from app.models.ai_draft_session import (
     AiDraftPreviewStatus,
 )
 from app.models.ai_draft_revision_snapshot import AiDraftRevisionSnapshot
+from app.models.prompt import Prompt, PromptType
 
 __all__ = [
     "Tenant",
@@ -33,4 +34,6 @@ __all__ = [
     "AiDraftCommunicationEvent",
     "AiDraftCommunicationKind",
     "AiDraftRevisionSnapshot",
+    "Prompt",
+    "PromptType",
 ]
