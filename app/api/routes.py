@@ -19,6 +19,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.schedule_rule import ScheduleRule
 from app.models.ai_draft_session import AiDraftPreviewStatus, AiDraftSession
+from app.models.prompt import Prompt
 from app.api.schemas import (
     AiDraftCommunicationEventResponse,
     AiDraftIterationMode,
@@ -46,11 +47,16 @@ from app.api.schemas import (
     ScheduleRuleCreate,
     ScheduleRuleUpdate,
     ScheduleRuleResponse,
+    PromptCreate,
+    PromptUpdate,
+    PromptSummaryResponse,
+    PromptResponse,
 )
 from app.db.engine import engine
 import app.services.task_repo as task_repo
 import app.services.tenant_repo as tenant_repo
 import app.services.schedule_rule_repo as schedule_rule_repo
+import app.services.prompt_repo as prompt_repo
 import app.services.ai_draft_session_repo as ai_draft_session_repo
 from app.services.ai_draft_preview_runner import run_ai_draft_preview_job
 from app.services.ai_task_draft_service import (
@@ -129,6 +135,22 @@ def _schedule_rule_for_current_tenant_or_404(rule_id: UUID, tenant: Tenant) -> S
     if rule.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail=f"Schedule rule {rule_id} not found")
     return rule
+
+
+def _prompt_body_preview(body: str, max_len: int = 120) -> str:
+    """Single place for list truncation (see plan: ~120 chars)."""
+    if len(body) <= max_len:
+        return body
+    return body[:max_len] + "…"
+
+
+def _prompt_for_current_tenant_or_404(prompt_id: UUID, tenant: Tenant) -> Prompt:
+    prompt = prompt_repo.get_prompt_by_id(prompt_id)
+    if prompt is None:
+        raise HTTPException(status_code=404, detail=f"Prompt {prompt_id} not found")
+    if prompt.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail=f"Prompt {prompt_id} not found")
+    return prompt
 
 
 def get_db_session():
@@ -452,6 +474,107 @@ def delete_schedule_rule_route(
     """Delete a schedule rule."""
     rule = _schedule_rule_for_current_tenant_or_404(rule_id, tenant)
     schedule_rule_repo.delete_schedule_rule(rule)
+    return None
+
+
+# --- Prompt routes (tenant-scoped templates) ---
+
+
+@scoped_router.get("/prompts", response_model=list[PromptSummaryResponse])
+def list_prompts(
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
+    rows = prompt_repo.list_prompts_for_tenant(
+        tenant_id=tenant.id, limit=limit, offset=offset
+    )
+    return [
+        PromptSummaryResponse(
+            id=p.id,
+            name=p.name,
+            type=p.prompt_type,
+            body_preview=_prompt_body_preview(p.body),
+            created_at=p.created_at,
+            updated_at=p.updated_at,
+        )
+        for p in rows
+    ]
+
+
+@scoped_router.get("/prompts/{prompt_id}", response_model=PromptResponse)
+def get_prompt(
+    prompt_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
+    p = _prompt_for_current_tenant_or_404(prompt_id, tenant)
+    return PromptResponse(
+        id=p.id,
+        tenant_id=p.tenant_id,
+        name=p.name,
+        type=p.prompt_type,
+        body=p.body,
+        created_at=p.created_at,
+        updated_at=p.updated_at,
+    )
+
+
+@scoped_router.post("/prompts", response_model=PromptResponse, status_code=201)
+def create_prompt_route(
+    data: PromptCreate,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
+    p = prompt_repo.create_prompt(
+        tenant_id=tenant.id,
+        name=data.name,
+        prompt_type=data.type,
+        body=data.body,
+    )
+    return PromptResponse(
+        id=p.id,
+        tenant_id=p.tenant_id,
+        name=p.name,
+        type=p.prompt_type,
+        body=p.body,
+        created_at=p.created_at,
+        updated_at=p.updated_at,
+    )
+
+
+@scoped_router.put("/prompts/{prompt_id}", response_model=PromptResponse)
+def update_prompt_route(
+    prompt_id: UUID,
+    data: PromptUpdate,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
+    if data.name is None and data.type is None and data.body is None:
+        raise HTTPException(status_code=422, detail="No fields to update")
+    p = _prompt_for_current_tenant_or_404(prompt_id, tenant)
+    if data.name is not None:
+        p.name = data.name
+    if data.type is not None:
+        p.prompt_type = data.type
+    if data.body is not None:
+        p.body = data.body
+    p = prompt_repo.save_prompt(p)
+    return PromptResponse(
+        id=p.id,
+        tenant_id=p.tenant_id,
+        name=p.name,
+        type=p.prompt_type,
+        body=p.body,
+        created_at=p.created_at,
+        updated_at=p.updated_at,
+    )
+
+
+@scoped_router.delete("/prompts/{prompt_id}", status_code=204)
+def delete_prompt_route(
+    prompt_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
+    p = _prompt_for_current_tenant_or_404(prompt_id, tenant)
+    prompt_repo.delete_prompt(p)
     return None
 
 

@@ -6,6 +6,7 @@
         <div class="app-header-left">
           <nav>
             <router-link to="/" class="nav-link">Tasks</router-link>
+            <router-link to="/prompts" class="nav-link">Prompts</router-link>
             <router-link to="/tenants" class="nav-link">Tenants</router-link>
             <router-link to="/scheduler" class="nav-link">Scheduler</router-link>
           </nav>

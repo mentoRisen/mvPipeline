@@ -1,4 +1,6 @@
-"""Sync SQLModel schema and verify critical AI draft columns/tables.
+"""Sync SQLModel schema and verify selected rollout-critical tables/columns.
+
+Checks include AI draft tables and tenant ``prompts`` (see REQUIRED_TABLE_COLUMNS).
 
 Usage:
     python scripts/sync_schema.py
@@ -51,6 +53,16 @@ REQUIRED_TABLE_COLUMNS = {
         "user_id",
         "bundle",
         "created_at",
+    },
+    # Tenant prompt templates (app.models.prompt.Prompt); DB column for enum is ``type``.
+    "prompts": {
+        "id",
+        "tenant_id",
+        "name",
+        "type",
+        "body",
+        "created_at",
+        "updated_at",
     },
 }
 
@@ -107,7 +119,7 @@ def _apply_missing_additive_changes(verbose: bool = False) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run SQLModel create_all sync, then verify AI draft schema shape.",
+        description="Run SQLModel create_all sync, then verify tracked tables (AI draft + prompts).",
     )
     parser.add_argument(
         "--check-only",

@@ -5,10 +5,11 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from app.models.task import TaskStatus
 from app.models.job import JobStatus
+from app.models.prompt import PromptType
 
 
 # --- Tenant schemas ---
@@ -425,3 +426,67 @@ class ScheduleRuleResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- Prompt schemas ---
+
+
+class PromptCreate(BaseModel):
+    """Create a tenant prompt row."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., max_length=200)
+    type: PromptType = Field(..., description="Prompt category (e.g. task-creation)")
+    body: str = Field(..., min_length=1, description="Full prompt text")
+
+    @field_validator("name")
+    @classmethod
+    def name_non_empty(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("name must not be empty")
+        return s
+
+
+class PromptUpdate(BaseModel):
+    """Partial update for a prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, max_length=200)
+    type: Optional[PromptType] = None
+    body: Optional[str] = Field(default=None, min_length=1)
+
+    @field_validator("name")
+    @classmethod
+    def name_if_set(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("name must not be empty")
+        return s
+
+
+class PromptSummaryResponse(BaseModel):
+    """List row: metadata plus truncated body for scanning."""
+
+    id: UUID
+    name: str
+    type: PromptType
+    body_preview: str = Field(description="Truncated body (~120 chars) for list UIs")
+    created_at: datetime
+    updated_at: datetime
+
+
+class PromptResponse(BaseModel):
+    """Full prompt for detail/edit responses."""
+
+    id: UUID
+    tenant_id: UUID
+    name: str
+    type: PromptType
+    body: str
+    created_at: datetime
+    updated_at: datetime

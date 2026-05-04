@@ -14,6 +14,7 @@ import app.db.engine as db_engine
 import app.services.schedule_rule_repo as schedule_rule_repo
 import app.config as app_config
 import app.services.ai_draft_session_repo as ai_draft_session_repo
+import app.services.prompt_repo as prompt_repo
 import app.services.task_repo as task_repo
 import app.services.tenant_repo as tenant_repo
 import app.services.user_repo as user_repo
@@ -37,6 +38,7 @@ def test_engine(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(user_repo, "engine", engine)
     monkeypatch.setattr(schedule_rule_repo, "engine", engine)
     monkeypatch.setattr(ai_draft_session_repo, "engine", engine)
+    monkeypatch.setattr(prompt_repo, "engine", engine)
     monkeypatch.setattr(routes, "engine", engine)
 
     SQLModel.metadata.create_all(engine)

@@ -256,6 +256,35 @@ export const tenantService = {
   },
 }
 
+export const promptService = {
+  async list(params = {}) {
+    const { limit = 100, offset = 0 } = params
+    const response = await api.get('/prompts', {
+      params: { limit, offset },
+    })
+    return response.data
+  },
+
+  async get(id) {
+    const response = await api.get(`/prompts/${id}`)
+    return response.data
+  },
+
+  async create(data) {
+    const response = await api.post('/prompts', data)
+    return response.data
+  },
+
+  async update(id, data) {
+    const response = await api.put(`/prompts/${id}`, data)
+    return response.data
+  },
+
+  async delete(id) {
+    await api.delete(`/prompts/${id}`)
+  },
+}
+
 export const scheduleRuleService = {
   async getByTenant(tenantId) {
     const response = await api.get(`/tenants/${tenantId}/schedule-rules`)
