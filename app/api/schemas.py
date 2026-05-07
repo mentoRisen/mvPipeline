@@ -91,7 +91,7 @@ class JobResponse(BaseModel):
 
 class JobCreate(BaseModel):
     """Schema for creating a new job."""
-    generator: str = Field(..., description="Generator to use (e.g., 'dalle', 'gptimage15')")
+    generator: str = Field(..., description="Generator to use (e.g., 'dalle', 'gptimage15', 'gptimage2')")
     purpose: Optional[str] = Field(None, description="Purpose/reason for how the job result should be used")
     prompt: Optional[dict] = Field(None, description="JSON with all data needed to run the prompt")
     order: Optional[int] = Field(0, description="Rendering order for this job (ascending)")
@@ -99,7 +99,7 @@ class JobCreate(BaseModel):
 
 class JobUpdate(BaseModel):
     """Schema for updating a job."""
-    generator: Optional[str] = Field(None, description="Generator to use (e.g., 'dalle', 'gptimage15')")
+    generator: Optional[str] = Field(None, description="Generator to use (e.g., 'dalle', 'gptimage15', 'gptimage2')")
     purpose: Optional[str] = Field(None, description="Purpose/reason for how the job result should be used")
     prompt: Optional[dict] = Field(None, description="JSON with all data needed to run the prompt")
     status: Optional[JobStatus] = Field(None, description="Job status")

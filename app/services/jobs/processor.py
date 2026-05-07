@@ -143,6 +143,47 @@ def process_job(job: Job) -> None:
                 session.add(db_job)
                 session.commit()
                 logger.info(f"Successfully processed job {job.id} with GPT-Image-1.5. Image saved to {image_path}")
+            elif generator_type == "gptimage2":
+                from app.services.jobs.processor_gptimage2 import generate_image as generate_image_gpt2
+                # Validate prompt exists
+                if not job.prompt or "prompt" not in job.prompt:
+                    raise ValueError(f"Job {job.id} is missing prompt data")
+                prompt_text = job.prompt.get("prompt")
+                if not prompt_text:
+                    raise ValueError(f"Job {job.id} prompt is empty")
+                # Generate image using GPT-Image-2
+                image_path = generate_image_gpt2(
+                    prompt_text=prompt_text,
+                    task_id=str(job.task_id),
+                    job_id=str(job.id)
+                )
+                # Upload generated image to public FTP (best-effort)
+                public_url = None
+                try:
+                    public_url = uploadToPublic(image_path)
+                    logger.info(
+                        "Uploaded GPT-Image-2 image for job %s to public FTP: %s",
+                        job.id,
+                        public_url,
+                    )
+                except Exception as ftp_err:
+                    logger.error(
+                        "Failed to upload GPT-Image-2 image for job %s to public FTP: %s",
+                        job.id,
+                        ftp_err,
+                    )
+
+                # Update job with success result
+                db_job.status = JobStatus.PROCESSED
+                db_job.result = {
+                    "image_path": image_path,
+                    "public_url": public_url,
+                    "generator": generator_type,
+                }
+                db_job.updated_at = datetime.utcnow()
+                session.add(db_job)
+                session.commit()
+                logger.info(f"Successfully processed job {job.id} with GPT-Image-2. Image saved to {image_path}")
             else:
                 raise ValueError(f"Unknown generator type: {job.generator}")
             

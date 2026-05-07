@@ -285,6 +285,9 @@ Image generation is handled by job processors under `app/services/jobs/`:
 - **GPT-Image-1.5** via `processor_gptimage15.py`
   - Uses the job's `generator` and `prompt.prompt` fields
   - Requires `OPENAI_API_KEY`
+- **GPT-Image-2** via `processor_gptimage2.py`
+  - Uses the job's `generator` and `prompt.prompt` fields
+  - Requires `OPENAI_API_KEY`
 - Generated files are written under `output/{task_id}/{job_id}.jpeg`
 
 ## Expected Output

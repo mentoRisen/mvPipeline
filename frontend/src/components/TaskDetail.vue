@@ -275,6 +275,7 @@
             <select v-model="newJob.generator">
               <option value="dalle">dalle</option>
               <option value="gptimage15">gptimage15</option>
+              <option value="gptimage2">gptimage2</option>
             </select>
           </div>
           <div class="form-group">
