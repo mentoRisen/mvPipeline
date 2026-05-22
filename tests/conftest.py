@@ -100,3 +100,24 @@ def client(test_engine, auth_user) -> Generator[TestClient, None, None]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+def ai_draft_preview_request(**overrides) -> dict:
+    """Default JSON body for ``POST /tasks/ai-draft-preview`` (initial generation)."""
+    body = {
+        "master_prompt_text": "You generate instagram_post draft tasks.",
+        "creation_prompt_text": "Create a launch post",
+    }
+    body.update(overrides)
+    return body
+
+
+def ai_draft_session_prompts(
+    *,
+    master: str = "Master prompt text",
+    creation: str = "Creation prompt text",
+) -> dict[str, str]:
+    return {
+        "master_prompt_text": master,
+        "creation_prompt_text": creation,
+    }

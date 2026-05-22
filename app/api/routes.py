@@ -19,6 +19,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.schedule_rule import ScheduleRule
 from app.models.ai_draft_session import AiDraftPreviewStatus, AiDraftSession
+from app.models.ai_draft_communication_event import AiDraftCommunicationKind
 from app.models.prompt import Prompt
 from app.api.schemas import (
     AiDraftCommunicationEventResponse,
@@ -268,6 +269,8 @@ def _active_draft_session_to_detail(row) -> AiDraftSessionDetailResponse:
     return AiDraftSessionDetailResponse(
         id=row.id,
         brief=row.brief,
+        master_prompt_text=row.master_prompt_text,
+        creation_prompt_text=row.creation_prompt_text,
         items=items,
         last_error=row.last_error,
         updated_at=row.updated_at,
@@ -581,6 +584,95 @@ def delete_prompt_route(
 # --- Task routes ---
 
 
+def _resolve_preview_prompts(
+    data: AiTaskDraftRequest,
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+) -> tuple[str, str]:
+    master = (data.master_prompt_text or "").strip()
+    creation = (data.creation_prompt_text or "").strip()
+    if data.draft_session_id and (not master or not creation):
+        row = ai_draft_session_repo.get_active_for_user(
+            data.draft_session_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        if row is not None:
+            if not master:
+                master = (row.master_prompt_text or "").strip()
+            if not creation:
+                creation = (row.creation_prompt_text or row.brief or "").strip()
+    return master, creation
+
+
+_DEFAULT_PREVIEW_MAX_TASKS = 2
+_DEFAULT_PREVIEW_MAX_JOBS = 4
+
+
+def _clamp_preview_max_tasks(value: int) -> int:
+    bounded = max(1, min(10, int(value)))
+    return min(bounded, app_config.AI_TASK_DRAFT_MAX_BUNDLE_ITEMS)
+
+
+def _clamp_preview_max_jobs(value: int) -> int:
+    return max(1, min(10, int(value)))
+
+
+def _limits_from_first_user_input_event(
+    events: list,
+) -> tuple[int, int] | None:
+    for ev in sorted(events, key=lambda row: getattr(row, "sequence", 0)):
+        kind = getattr(ev, "kind", None)
+        if getattr(kind, "value", kind) != AiDraftCommunicationKind.USER_INPUT.value:
+            continue
+        payload = getattr(ev, "payload", None) or {}
+        if not isinstance(payload, dict):
+            continue
+        raw_tasks = payload.get("max_tasks")
+        raw_jobs = payload.get("max_jobs")
+        tasks = (
+            _DEFAULT_PREVIEW_MAX_TASKS
+            if raw_tasks is None
+            else _clamp_preview_max_tasks(int(raw_tasks))
+        )
+        jobs = (
+            _DEFAULT_PREVIEW_MAX_JOBS
+            if raw_jobs is None
+            else _clamp_preview_max_jobs(int(raw_jobs))
+        )
+        return tasks, jobs
+    return None
+
+
+def _resolve_preview_limits(
+    data: AiTaskDraftRequest,
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+) -> tuple[int, int]:
+    if data.draft_session_id:
+        events = ai_draft_session_repo.list_communication_events(
+            draft_session_id=data.draft_session_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        frozen = _limits_from_first_user_input_event(events)
+        if frozen is not None:
+            return frozen
+        return _DEFAULT_PREVIEW_MAX_TASKS, _DEFAULT_PREVIEW_MAX_JOBS
+
+    tasks = (
+        data.max_tasks
+        if data.max_tasks is not None
+        else _DEFAULT_PREVIEW_MAX_TASKS
+    )
+    jobs = (
+        data.max_jobs if data.max_jobs is not None else _DEFAULT_PREVIEW_MAX_JOBS
+    )
+    return _clamp_preview_max_tasks(tasks), _clamp_preview_max_jobs(jobs)
+
+
 @scoped_router.post("/tasks/ai-draft-preview", response_model=AiTaskDraftBundleResponse)
 def create_ai_task_draft_preview(
     data: AiTaskDraftRequest,
@@ -590,20 +682,36 @@ def create_ai_task_draft_preview(
 ):
     """Start async AI draft preview; poll ``GET .../ai-draft-sessions/{id}`` for results."""
     _validate_iteration_contract(data)
+    master_prompt_text, creation_prompt_text = _resolve_preview_prompts(
+        data,
+        tenant_id=tenant.id,
+        user_id=user.id,
+    )
+    max_tasks, max_jobs = _resolve_preview_limits(
+        data,
+        tenant_id=tenant.id,
+        user_id=user.id,
+    )
     session_id = ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=user.id,
-        brief=data.brief,
+        master_prompt_text=master_prompt_text,
+        creation_prompt_text=creation_prompt_text,
         draft_session_id=data.draft_session_id,
     )
     job_kwargs = dict(
         draft_session_id=session_id,
         tenant_id=tenant.id,
         user_id=user.id,
-        brief=data.brief,
+        master_prompt_text=master_prompt_text,
+        creation_prompt_text=creation_prompt_text,
+        model_token=data.model,
+        reasoning_token=data.reasoning,
         iteration_mode=data.iteration_mode,
         instruction_text=data.instruction_text,
         target_scope=data.target_scope,
+        max_tasks=max_tasks,
+        max_jobs=max_jobs,
     )
     if app_config.AI_DRAFT_PREVIEW_BLOCKING:
         run_ai_draft_preview_job(**job_kwargs)
@@ -727,6 +835,8 @@ def list_ai_draft_sessions(
             AiDraftSessionSummaryResponse(
                 id=row.id,
                 brief=row.brief,
+                master_prompt_text=row.master_prompt_text,
+                creation_prompt_text=row.creation_prompt_text,
                 item_count=count,
                 updated_at=row.updated_at,
                 preview_status=_preview_status_value(row),
@@ -774,6 +884,8 @@ def patch_ai_draft_session(
         tenant_id=tenant.id,
         user_id=user.id,
         brief=body.brief,
+        master_prompt_text=body.master_prompt_text,
+        creation_prompt_text=body.creation_prompt_text,
         items=items_dump,
     )
     return _active_draft_session_to_detail(row)

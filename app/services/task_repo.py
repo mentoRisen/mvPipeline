@@ -149,7 +149,9 @@ def create_task_with_jobs(task: Task, jobs: list[Job]) -> Task:
     """Persist one task and its jobs in a single transaction."""
     with Session(engine) as session:
         session.add(task)
+        session.flush()
         for job in jobs:
+            job.task_id = task.id
             session.add(job)
         session.commit()
         session.refresh(task)
@@ -166,6 +168,7 @@ def create_task_bundle_with_jobs(
     with Session(engine) as session:
         for task, jobs in bundles:
             session.add(task)
+            session.flush()
             for job in jobs:
                 job.task_id = task.id
                 session.add(job)

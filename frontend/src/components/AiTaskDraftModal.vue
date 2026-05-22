@@ -5,7 +5,8 @@
         <div>
           <h3>AI Create Campaign</h3>
           <p class="ai-draft-subtitle">
-            Draft one or more <code>instagram_post</code> tasks from a brief, review them, then create
+            Draft one or more <code>instagram_post</code> tasks using your <strong>master</strong> and
+            <strong>creation</strong> prompts, review them, then create
             <strong>all tasks and jobs at once</strong> (nothing is saved partially). Duplicates can occur
             if you retry after an unclear network error.
           </p>
@@ -54,14 +55,141 @@
             ></textarea>
           </div>
         </div>
-        <div class="form-group">
-          <label>Brief <span class="required">*</span></label>
-          <textarea
-            v-model="brief"
-            rows="7"
-            :disabled="generating"
-            placeholder="Describe the campaign: themes, posts, angles, tone, and visual direction."
-          ></textarea>
+        <div class="card ai-draft-prompt-config-card">
+          <h4 class="ai-draft-resume-title">AI generation settings</h4>
+          <p v-if="promptsError" class="error ai-draft-prompts-error">{{ promptsError }}</p>
+          <p v-else-if="promptsLoading" class="ai-draft-help">Loading saved prompts…</p>
+
+          <div class="form-group">
+            <label for="ai-draft-master-select">Master prompt</label>
+            <select
+              id="ai-draft-master-select"
+              v-model="masterPromptId"
+              class="ai-draft-prompt-select"
+              :disabled="generating || confirming || promptsLoading"
+              @change="onMasterPromptSelect"
+            >
+              <option :value="customPromptSelectValue">Custom (type or paste below)</option>
+              <option
+                v-for="p in masterPromptOptions"
+                :key="p.id"
+                :value="p.id"
+              >
+                {{ p.name }}
+              </option>
+            </select>
+            <label for="ai-draft-master-text">Master prompt text <span class="required">*</span></label>
+            <textarea
+              id="ai-draft-master-text"
+              v-model="masterPromptText"
+              rows="5"
+              :disabled="generating || confirming"
+              placeholder="Brand voice, constraints, and campaign-level rules."
+            ></textarea>
+          </div>
+
+          <div class="ai-draft-limits-row">
+            <div class="form-group">
+              <label for="ai-draft-max-tasks">Max Tasks</label>
+              <select
+                id="ai-draft-max-tasks"
+                v-model="maxTasks"
+                :disabled="generating || confirming"
+              >
+                <option
+                  v-for="opt in limitOptions"
+                  :key="`tasks-${opt.value}`"
+                  :value="opt.value"
+                >
+                  {{ opt.label }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="ai-draft-max-jobs">Max Jobs</label>
+              <select
+                id="ai-draft-max-jobs"
+                v-model="maxJobs"
+                :disabled="generating || confirming"
+              >
+                <option
+                  v-for="opt in limitOptions"
+                  :key="`jobs-${opt.value}`"
+                  :value="opt.value"
+                >
+                  {{ opt.label }}
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="ai-draft-creation-select">Creation prompt</label>
+            <select
+              id="ai-draft-creation-select"
+              v-model="creationPromptId"
+              class="ai-draft-prompt-select"
+              :disabled="generating || confirming || promptsLoading"
+              @change="onCreationPromptSelect"
+            >
+              <option :value="customPromptSelectValue">Custom (type or paste below)</option>
+              <option
+                v-for="p in creationPromptOptions"
+                :key="p.id"
+                :value="p.id"
+              >
+                {{ p.name }}
+              </option>
+            </select>
+            <label for="ai-draft-creation-text">Creation prompt text <span class="required">*</span></label>
+            <textarea
+              id="ai-draft-creation-text"
+              v-model="creationPromptText"
+              rows="6"
+              :disabled="generating || confirming"
+              placeholder="Task generation instructions: structure, themes, posts, tone, visual direction."
+            ></textarea>
+          </div>
+
+          <div class="ai-draft-model-reasoning-row">
+            <div class="form-group">
+              <label for="ai-draft-model">Model</label>
+              <select
+                id="ai-draft-model"
+                v-model="aiModel"
+                :disabled="generating || confirming"
+              >
+                <option
+                  v-for="opt in modelOptions"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ opt.label }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="ai-draft-reasoning">Reasoning</label>
+              <select
+                id="ai-draft-reasoning"
+                v-model="aiReasoning"
+                :disabled="generating || confirming"
+              >
+                <option
+                  v-for="opt in reasoningOptions"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ opt.label }}
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <p class="ai-draft-help">
+            Saved prompts come from the Prompts page for this tenant. Model and reasoning apply on the
+            server in a later update; creation text is sent for preview today.
+          </p>
         </div>
 
         <div v-if="loadingResumeList" class="ai-draft-help">Loading saved drafts…</div>
@@ -72,15 +200,28 @@
             back, or recover after a failed create.
           </p>
           <ul class="ai-draft-resume-list">
-            <li v-for="s in resumableSessions" :key="s.id">
+            <li v-for="s in resumableSessions" :key="s.id" class="ai-draft-resume-row">
               <button
                 type="button"
                 class="btn-secondary ai-draft-resume-btn"
-                :disabled="generating"
+                :disabled="generating || Boolean(discardingSessionId)"
                 @click="resumeSession(s.id)"
               >
                 <span class="ai-draft-resume-brief">{{ resumeLabel(s) }}</span>
                 <span class="ai-draft-resume-meta">{{ s.item_count }} task(s)</span>
+              </button>
+              <button
+                type="button"
+                class="btn-danger btn-small ai-draft-resume-discard-btn"
+                :disabled="
+                  confirming ||
+                  Boolean(discardingSessionId) ||
+                  (generating && draftSessionId === s.id)
+                "
+                :title="`Discard ${resumeLabel(s)}`"
+                @click="discardResumableSession(s)"
+              >
+                {{ discardingSessionId === s.id ? 'Discarding…' : 'Discard' }}
               </button>
             </li>
           </ul>
@@ -111,7 +252,7 @@
           <button
             type="button"
             class="btn-primary"
-            :disabled="generating || !trimmedBrief"
+            :disabled="generating || !canGenerate"
             @click="generateDraft"
           >
             {{ generating ? 'Generating…' : 'Generate Draft' }}
@@ -380,8 +521,26 @@
 </template>
 
 <script>
-import { taskService } from '../services/api'
+import { promptService, taskService } from '../services/api'
 import { formatAiDraftTranscriptPayloadHtml } from './aiDraftTranscriptFormatting.js'
+import {
+  AI_DRAFT_LIMIT_OPTIONS,
+  AI_DRAFT_MODEL_OPTIONS,
+  AI_DRAFT_REASONING_OPTIONS,
+  CUSTOM_PROMPT_SELECT_VALUE,
+  DEFAULT_AI_DRAFT_MAX_JOBS,
+  DEFAULT_AI_DRAFT_MAX_TASKS,
+  DEFAULT_AI_DRAFT_MODEL,
+  DEFAULT_AI_DRAFT_REASONING,
+  PROMPT_TYPE_CREATION,
+  PROMPT_TYPE_MASTER,
+  buildPreviewBriefShim,
+  canGenerateFromPrompts,
+  filterPromptsByType,
+  limitsFromFirstUserInputEvent,
+  parseDraftLimit,
+  resumeSessionLabel,
+} from './aiDraftPromptConfig.js'
 
 function emptyDraftJob() {
   return {
@@ -436,7 +595,18 @@ export default {
   emits: ['close', 'created', 'discarded'],
   data() {
     return {
-      brief: '',
+      masterPromptId: '',
+      masterPromptText: '',
+      creationPromptId: '',
+      creationPromptText: '',
+      aiModel: DEFAULT_AI_DRAFT_MODEL,
+      aiReasoning: DEFAULT_AI_DRAFT_REASONING,
+      maxTasks: String(DEFAULT_AI_DRAFT_MAX_TASKS),
+      maxJobs: String(DEFAULT_AI_DRAFT_MAX_JOBS),
+      allPrompts: [],
+      promptsLoading: false,
+      promptsError: null,
+      promptBodiesById: {},
       bundle: null,
       expandedTasks: {},
       error: null,
@@ -445,6 +615,7 @@ export default {
       previewAbortController: null,
       draftSessionId: null,
       resumableSessions: [],
+      discardingSessionId: null,
       loadingResumeList: false,
       autosaveTimer: null,
       communicationEvents: [],
@@ -458,15 +629,42 @@ export default {
     }
   },
   computed: {
+    customPromptSelectValue() {
+      return CUSTOM_PROMPT_SELECT_VALUE
+    },
+    modelOptions() {
+      return AI_DRAFT_MODEL_OPTIONS
+    },
+    reasoningOptions() {
+      return AI_DRAFT_REASONING_OPTIONS
+    },
+    limitOptions() {
+      return AI_DRAFT_LIMIT_OPTIONS
+    },
+    masterPromptOptions() {
+      return filterPromptsByType(this.allPrompts, PROMPT_TYPE_MASTER)
+    },
+    creationPromptOptions() {
+      return filterPromptsByType(this.allPrompts, PROMPT_TYPE_CREATION)
+    },
+    canGenerate() {
+      return canGenerateFromPrompts({
+        masterText: this.masterPromptText,
+        creationText: this.creationPromptText,
+      })
+    },
+    previewBriefShim() {
+      return buildPreviewBriefShim({
+        masterText: this.masterPromptText,
+        creationText: this.creationPromptText,
+      })
+    },
     showTranscriptColumn() {
       return (
         this.generating ||
         this.bundle != null ||
         (Array.isArray(this.communicationEvents) && this.communicationEvents.length > 0)
       )
-    },
-    trimmedBrief() {
-      return this.brief.trim()
     },
     totalJobCount() {
       if (!this.bundle?.items?.length) return 0
@@ -505,9 +703,13 @@ export default {
         this.resetState()
       } else {
         this.loadResumableSessions()
+        this.loadPrompts()
       }
     },
-    brief() {
+    masterPromptText() {
+      this.scheduleAutosave()
+    },
+    creationPromptText() {
       this.scheduleAutosave()
     },
     bundle: {
@@ -518,7 +720,11 @@ export default {
     },
     tenantId(newTenantId, oldTenantId) {
       if (!this.visible || !oldTenantId || newTenantId === oldTenantId) return
-      const hadDraftWork = Boolean(this.bundle) || Boolean(this.trimmedBrief)
+      const hadDraftWork =
+        Boolean(this.bundle) ||
+        Boolean(this.previewBriefShim) ||
+        Boolean(this.masterPromptText.trim()) ||
+        Boolean(this.creationPromptText.trim())
       this.abortPreviewRequest()
       this.stopPreviewPolling()
       this.clearAutosaveTimer()
@@ -582,7 +788,8 @@ export default {
       }
       try {
         const body = {
-          brief: this.brief,
+          master_prompt_text: this.masterPromptText.trim(),
+          creation_prompt_text: this.creationPromptText.trim(),
           items: this.sanitizeBundleForConfirm().items,
         }
         await taskService.patchAiDraftSession(this.draftSessionId, body)
@@ -605,9 +812,55 @@ export default {
       }
     },
     resumeLabel(sessionRow) {
-      const t = (sessionRow.brief || '').trim().replace(/\s+/g, ' ')
-      if (!t) return '(No brief text)'
-      return t.length > 72 ? `${t.slice(0, 72)}…` : t
+      return resumeSessionLabel(sessionRow)
+    },
+    async loadPrompts() {
+      if (!this.tenantId) {
+        this.allPrompts = []
+        this.promptBodiesById = {}
+        this.promptsError = null
+        return
+      }
+      this.promptsLoading = true
+      this.promptsError = null
+      try {
+        this.allPrompts = (await promptService.list()) || []
+      } catch (error) {
+        this.allPrompts = []
+        this.promptsError =
+          formatDraftErrorDetail(error?.response?.data?.detail) ||
+          error?.message ||
+          'Failed to load saved prompts.'
+      } finally {
+        this.promptsLoading = false
+      }
+    },
+    async fetchPromptBody(promptId) {
+      if (!promptId) return null
+      if (this.promptBodiesById[promptId]) {
+        return this.promptBodiesById[promptId]
+      }
+      try {
+        const row = await promptService.get(promptId)
+        const body = row?.body
+        if (typeof body === 'string') {
+          this.promptBodiesById = { ...this.promptBodiesById, [promptId]: body }
+          return body
+        }
+      } catch {
+        /* fall through */
+      }
+      return null
+    },
+    async onMasterPromptSelect() {
+      if (!this.masterPromptId) return
+      const body = await this.fetchPromptBody(this.masterPromptId)
+      if (body != null) this.masterPromptText = body
+    },
+    async onCreationPromptSelect() {
+      if (!this.creationPromptId) return
+      const body = await this.fetchPromptBody(this.creationPromptId)
+      if (body != null) this.creationPromptText = body
     },
     async resumeSession(sessionId) {
       if (!this.tenantId || this.generating) return
@@ -619,8 +872,20 @@ export default {
         const data = await taskService.getAiDraftSession(sessionId)
         if (stateVersion !== this.asyncStateVersion) return
         this.draftSessionId = data.id
-        this.brief = data.brief || ''
+        const resumedCreation = (
+          data.creation_prompt_text || data.brief || ''
+        ).trim()
+        const resumedMaster = (data.master_prompt_text || '').trim()
+        this.creationPromptText = resumedCreation
+        this.masterPromptText = resumedMaster
+        this.masterPromptId = ''
+        this.creationPromptId = ''
         this.setCommunicationEventsFromApi(data.communication_events)
+        const resumedLimits = limitsFromFirstUserInputEvent(this.communicationEvents)
+        if (resumedLimits) {
+          this.maxTasks = String(resumedLimits.maxTasks)
+          this.maxJobs = String(resumedLimits.maxJobs)
+        }
         this.undoSnapshots = Array.isArray(data.undo_snapshots) ? data.undo_snapshots : []
         if (data.preview_status === 'running') {
           this.bundle = null
@@ -655,16 +920,32 @@ export default {
     },
     async discardSavedDraft() {
       if (!this.draftSessionId || this.confirming || this.generating) return
+      await this.discardDraftSession(this.draftSessionId)
+    },
+    async discardResumableSession(sessionRow) {
+      if (!sessionRow?.id || this.confirming || this.discardingSessionId) return
+      if (this.generating && this.draftSessionId === sessionRow.id) return
+      await this.discardDraftSession(sessionRow.id, sessionRow)
+    },
+    async discardDraftSession(sessionId, sessionRow = null) {
+      if (!sessionId || this.confirming || this.discardingSessionId) return
+      const label = sessionRow ? this.resumeLabel(sessionRow) : 'this saved draft'
       const confirmed = window.confirm(
-        'Discard this saved draft? This action cannot be undone.'
+        `Discard saved draft "${label}"? This action cannot be undone.`
       )
       if (!confirmed) return
-      const id = this.draftSessionId
-      this.asyncStateVersion += 1
-      this.abortPreviewRequest()
-      this.stopPreviewPolling()
+
+      const wasCurrent = this.draftSessionId === sessionId
+      if (wasCurrent) {
+        this.asyncStateVersion += 1
+        this.abortPreviewRequest()
+        this.stopPreviewPolling()
+        this.generating = false
+      }
+
+      this.discardingSessionId = sessionId
       try {
-        await taskService.deleteAiDraftSession(id)
+        await taskService.deleteAiDraftSession(sessionId)
       } catch (error) {
         if (error?.response?.status === 401) {
           this.handleAuthLoss()
@@ -675,16 +956,21 @@ export default {
           error?.message ||
           'Could not discard draft.'
         return
+      } finally {
+        this.discardingSessionId = null
       }
-      this.draftSessionId = null
-      this.bundle = null
-      this.expandedTasks = {}
-      this.error = null
-      this.communicationEvents = []
-      this.undoSnapshots = []
-      this.showFollowUpForm = false
-      this.instructionText = ''
-      this.iterationMode = 'regenerate'
+
+      if (wasCurrent) {
+        this.draftSessionId = null
+        this.bundle = null
+        this.expandedTasks = {}
+        this.error = null
+        this.communicationEvents = []
+        this.undoSnapshots = []
+        this.showFollowUpForm = false
+        this.instructionText = ''
+        this.iterationMode = 'regenerate'
+      }
       await this.loadResumableSessions()
     },
     toggleExpanded(taskIndex) {
@@ -848,8 +1134,13 @@ export default {
       this.$emit('discarded', 'Session expired. AI draft was closed.')
     },
     async generateDraft() {
-      if (!this.trimmedBrief) {
-        this.error = 'Enter a brief first.'
+      if (!this.canGenerate) {
+        this.error = 'Enter master and creation prompt text first.'
+        return
+      }
+      const briefShim = this.previewBriefShim
+      if (!briefShim) {
+        this.error = 'Enter creation prompt text first.'
         return
       }
       if (!this.tenantId) {
@@ -864,7 +1155,14 @@ export default {
       const stateVersion = this.asyncStateVersion
 
       try {
-        const payload = { brief: this.trimmedBrief }
+        const payload = {
+          master_prompt_text: this.masterPromptText.trim(),
+          creation_prompt_text: this.creationPromptText.trim(),
+          model: this.aiModel,
+          reasoning: this.aiReasoning,
+          max_tasks: parseDraftLimit(this.maxTasks, DEFAULT_AI_DRAFT_MAX_TASKS),
+          max_jobs: parseDraftLimit(this.maxJobs, DEFAULT_AI_DRAFT_MAX_JOBS),
+        }
         if (this.draftSessionId) {
           const followUpInstruction = this.instructionText.trim()
           if (!followUpInstruction) {
@@ -997,7 +1295,18 @@ export default {
     resetState() {
       this.asyncStateVersion += 1
       this.stopPreviewPolling()
-      this.brief = ''
+      this.masterPromptId = ''
+      this.masterPromptText = ''
+      this.creationPromptId = ''
+      this.creationPromptText = ''
+      this.aiModel = DEFAULT_AI_DRAFT_MODEL
+      this.aiReasoning = DEFAULT_AI_DRAFT_REASONING
+      this.maxTasks = String(DEFAULT_AI_DRAFT_MAX_TASKS)
+      this.maxJobs = String(DEFAULT_AI_DRAFT_MAX_JOBS)
+      this.allPrompts = []
+      this.promptsLoading = false
+      this.promptsError = null
+      this.promptBodiesById = {}
       this.bundle = null
       this.expandedTasks = {}
       this.error = null
@@ -1007,6 +1316,7 @@ export default {
       this.previewPollInFlight = false
       this.draftSessionId = null
       this.resumableSessions = []
+      this.discardingSessionId = null
       this.communicationEvents = []
       this.iterationMode = 'regenerate'
       this.instructionText = ''
@@ -1156,6 +1466,34 @@ export default {
   color: var(--color-warning, #f59e0b);
 }
 
+.ai-draft-prompt-config-card {
+  padding: 1rem 1.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.ai-draft-prompts-error {
+  margin-bottom: 0.75rem;
+}
+
+.ai-draft-prompt-select {
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.ai-draft-limits-row,
+.ai-draft-model-reasoning-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .ai-draft-limits-row,
+  .ai-draft-model-reasoning-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .ai-draft-resume-card {
   padding: 1rem 1.25rem;
   margin-bottom: 0.5rem;
@@ -1179,8 +1517,20 @@ export default {
   gap: 0.5rem;
 }
 
+.ai-draft-resume-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.ai-draft-resume-discard-btn {
+  flex-shrink: 0;
+  align-self: center;
+}
+
 .ai-draft-resume-btn {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   text-align: left;
   display: flex;
   flex-wrap: wrap;
