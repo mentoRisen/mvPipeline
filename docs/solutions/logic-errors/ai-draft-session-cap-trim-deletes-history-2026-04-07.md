@@ -55,6 +55,7 @@ The prior logic optimized for capacity by mutating user state implicitly. The ne
 - Keep user-facing remediation messages aligned with backend error codes.
 
 ## Related Issues
+- Solution: [AI draft backend prompt wiring and structured outputs](../architecture-patterns/ai-draft-backend-prompt-wiring-2026-05-22.md) — transcript `communication_events` and prompt columns grow session payloads; cap policy remains reject-at-cap
 - Plan: `docs/plans/2026-04-07-001-fix-ai-draft-session-retention-cap-plan.md`
 - Plan: `docs/plans/2026-04-06-001-feat-ai-draft-communication-log-plan.md`
 - Updated files: `app/services/ai_draft_session_repo.py`, `tests/services/test_ai_draft_session_repo.py`, `tests/api/test_ai_task_draft_routes.py`, `frontend/src/components/AiTaskDraftModal.vue`
