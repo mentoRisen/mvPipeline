@@ -49,8 +49,11 @@ class SupportsTextDraftPreview(Protocol):
     def generate_campaign_draft(
         self,
         *,
-        brief: str,
+        master_prompt_text: str,
+        creation_prompt_text: str,
         tenant_context: dict[str, Any],
+        model_token: str | None = None,
+        reasoning_token: str | None = None,
     ) -> dict[str, Any]:
         """Return raw JSON with either ``items`` (list) or a single-task shape (task + jobs)."""
 
@@ -66,18 +69,29 @@ class AiTaskDraftService:
             [list[tuple[Task, list[Job]]]], list[Task]
         ] | None = None,
         max_bundle_items: int | None = None,
+        max_jobs_per_item: int | None = None,
     ) -> None:
         self.adapter = adapter
         self.bundle_writer = bundle_writer or task_repo.create_task_bundle_with_jobs
         self.max_bundle_items = max_bundle_items or AI_TASK_DRAFT_MAX_BUNDLE_ITEMS
+        self.max_jobs_per_item = max_jobs_per_item
 
     def generate_preview(
-        self, *, brief: str, tenant: Tenant
+        self,
+        *,
+        master_prompt_text: str,
+        creation_prompt_text: str,
+        tenant: Tenant,
+        model_token: str | None = None,
+        reasoning_token: str | None = None,
     ) -> AiTaskDraftBundleResponse:
         """Return a validated preview bundle without persisting any records."""
         raw = self.adapter.generate_campaign_draft(
-            brief=brief,
+            master_prompt_text=master_prompt_text,
+            creation_prompt_text=creation_prompt_text,
             tenant_context=self.build_tenant_context(tenant),
+            model_token=model_token,
+            reasoning_token=reasoning_token,
         )
         return self.validate_raw_llm_dict(raw)
 
@@ -222,6 +236,14 @@ class AiTaskDraftService:
         if not preview.jobs:
             raise AiTaskDraftValidationError(
                 "AI draft preview must include at least one job per task"
+            )
+        if (
+            self.max_jobs_per_item is not None
+            and len(preview.jobs) > self.max_jobs_per_item
+        ):
+            raise AiTaskDraftItemValidationError(
+                f"AI draft preview exceeds maximum of {self.max_jobs_per_item} jobs per task",
+                field="jobs",
             )
 
         template = InstagramPost()

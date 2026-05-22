@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from app.models.task import TaskStatus
 from app.models.job import JobStatus
@@ -145,11 +145,37 @@ class AiTaskDraftRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    brief: str = Field(
-        ...,
-        min_length=1,
-        max_length=4000,
-        description="Natural-language brief for generating one or more draft tasks",
+    master_prompt_text: Optional[str] = Field(
+        default=None,
+        max_length=16000,
+        description="Tenant master prompt sent as the system message",
+    )
+    creation_prompt_text: Optional[str] = Field(
+        default=None,
+        max_length=16000,
+        description="Creation prompt sent as the user message with tenant context",
+    )
+    model: Optional[str] = Field(
+        default=None,
+        max_length=32,
+        description="Product-facing model token (5.1, 5.4, 5.5)",
+    )
+    reasoning: Optional[str] = Field(
+        default=None,
+        max_length=16,
+        description="Reasoning effort token: none, low, medium, high",
+    )
+    max_tasks: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description="Maximum tasks in the generated bundle (initial preview only)",
+    )
+    max_jobs: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description="Maximum jobs per task in the generated bundle (initial preview only)",
     )
     draft_session_id: Optional[UUID] = Field(
         default=None,
@@ -169,6 +195,25 @@ class AiTaskDraftRequest(BaseModel):
         default=None,
         description="Target granularity for follow-up instructions; v1 supports campaign",
     )
+
+    @model_validator(mode="after")
+    def validate_prompt_contract(self) -> "AiTaskDraftRequest":
+        is_follow_up = (
+            self.iteration_mode is not None
+            or self.instruction_text is not None
+            or self.target_scope is not None
+        )
+        if is_follow_up:
+            if not (self.instruction_text or "").strip():
+                raise ValueError(
+                    "instruction_text is required for follow-up preview iterations"
+                )
+            return self
+        if not (self.master_prompt_text or "").strip():
+            raise ValueError("master_prompt_text is required for initial preview")
+        if not (self.creation_prompt_text or "").strip():
+            raise ValueError("creation_prompt_text is required for initial preview")
+        return self
 
 
 class AiDraftIterationMode(str, Enum):
@@ -280,6 +325,8 @@ class AiDraftSessionSummaryResponse(BaseModel):
 
     id: UUID
     brief: str
+    master_prompt_text: Optional[str] = None
+    creation_prompt_text: Optional[str] = None
     item_count: int
     updated_at: datetime
     preview_status: str = Field(
@@ -295,6 +342,8 @@ class AiDraftSessionDetailResponse(BaseModel):
 
     id: UUID
     brief: str
+    master_prompt_text: Optional[str] = None
+    creation_prompt_text: Optional[str] = None
     items: list[AiTaskDraftItem] = Field(
         default_factory=list,
         description="Empty while preview is running or failed without bundle",
@@ -316,6 +365,8 @@ class AiDraftSessionPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     brief: Optional[str] = Field(default=None, max_length=4000)
+    master_prompt_text: Optional[str] = Field(default=None, max_length=16000)
+    creation_prompt_text: Optional[str] = Field(default=None, max_length=16000)
     items: Optional[list[AiTaskDraftItem]] = None
 
 

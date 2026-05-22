@@ -39,8 +39,22 @@ class StubAdapter:
         self.payload = payload
         self.calls = []
 
-    def generate_campaign_draft(self, *, brief: str, tenant_context: dict):
-        self.calls.append({"brief": brief, "tenant_context": tenant_context})
+    def generate_campaign_draft(
+        self,
+        *,
+        master_prompt_text: str,
+        creation_prompt_text: str,
+        tenant_context: dict,
+        model_token: str | None = None,
+        reasoning_token: str | None = None,
+    ):
+        self.calls.append(
+            {
+                "master_prompt_text": master_prompt_text,
+                "creation_prompt_text": creation_prompt_text,
+                "tenant_context": tenant_context,
+            }
+        )
         if isinstance(self.payload, Exception):
             raise self.payload
         return self.payload
@@ -52,7 +66,11 @@ def test_generate_preview_returns_validated_preview_without_db_writes(
     adapter = StubAdapter(_single_payload())
     service = AiTaskDraftService(adapter)
 
-    preview = service.generate_preview(brief="Create a spring post", tenant=tenant)
+    preview = service.generate_preview(
+        master_prompt_text="Master",
+        creation_prompt_text="Create a spring post",
+        tenant=tenant,
+    )
 
     assert len(preview.items) == 1
     item = preview.items[0]
@@ -96,7 +114,11 @@ def test_generate_preview_accepts_items_array(tenant, db_session):
     )
     service = AiTaskDraftService(adapter)
 
-    preview = service.generate_preview(brief="Campaign", tenant=tenant)
+    preview = service.generate_preview(
+        master_prompt_text="Master",
+        creation_prompt_text="Campaign",
+        tenant=tenant,
+    )
 
     assert len(preview.items) == 2
     assert preview.items[0].task.name == "Launch spring campaign"
@@ -109,9 +131,28 @@ def test_generate_preview_rejects_empty_items(tenant):
 
     with pytest.raises(AiTaskDraftValidationError, match="at least one"):
         AiTaskDraftService(adapter).generate_preview(
-            brief="Create something",
+            master_prompt_text="M",
+            creation_prompt_text="Create something",
             tenant=tenant,
         )
+
+
+def test_generate_preview_rejects_too_many_jobs_per_task(tenant):
+    payload = _single_payload()
+    payload["jobs"] = [
+        {
+            "generator": "dalle",
+            "purpose": "imagecontent",
+            "prompt": {"prompt": f"Prompt {i}"},
+            "order": i,
+        }
+        for i in range(5)
+    ]
+    adapter = StubAdapter({"items": [payload]})
+    service = AiTaskDraftService(adapter, max_bundle_items=5, max_jobs_per_item=4)
+
+    with pytest.raises(AiTaskDraftItemValidationError, match="jobs"):
+        service.validate_raw_llm_dict({"items": [payload]})
 
 
 def test_generate_preview_rejects_too_many_items(tenant):
@@ -124,7 +165,11 @@ def test_generate_preview_rejects_too_many_items(tenant):
     service = AiTaskDraftService(adapter, max_bundle_items=5)
 
     with pytest.raises(AiTaskDraftValidationError, match="exceeds maximum"):
-        service.generate_preview(brief="Huge batch", tenant=tenant)
+        service.generate_preview(
+            master_prompt_text="M",
+            creation_prompt_text="Huge batch",
+            tenant=tenant,
+        )
 
 
 def test_generate_preview_allows_missing_optional_tenant_fields(tenant):
@@ -151,7 +196,8 @@ def test_generate_preview_allows_missing_optional_tenant_fields(tenant):
     )
 
     preview = AiTaskDraftService(adapter).generate_preview(
-        brief="Need one simple post",
+        master_prompt_text="M",
+        creation_prompt_text="Need one simple post",
         tenant=tenant,
     )
 
@@ -182,7 +228,8 @@ def test_generate_preview_rejects_non_instagram_template(tenant):
 
     with pytest.raises(AiTaskDraftItemValidationError) as excinfo:
         AiTaskDraftService(adapter).generate_preview(
-            brief="Create something",
+            master_prompt_text="M",
+            creation_prompt_text="Create something",
             tenant=tenant,
         )
     assert excinfo.value.item_index == 0
@@ -193,7 +240,8 @@ def test_generate_preview_rejects_malformed_payload(tenant):
 
     with pytest.raises(AiTaskDraftValidationError):
         AiTaskDraftService(adapter).generate_preview(
-            brief="Create something",
+            master_prompt_text="M",
+            creation_prompt_text="Create something",
             tenant=tenant,
         )
 
@@ -203,7 +251,8 @@ def test_generate_preview_bubbles_up_upstream_errors(tenant):
 
     with pytest.raises(TextDraftUpstreamError):
         AiTaskDraftService(adapter).generate_preview(
-            brief="Create something",
+            master_prompt_text="M",
+            creation_prompt_text="Create something",
             tenant=tenant,
         )
 

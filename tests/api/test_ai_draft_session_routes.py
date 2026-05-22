@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from uuid import uuid4
 
+from conftest import ai_draft_preview_request
+
 from app.api.schemas import AiTaskDraftBundleResponse
 from app.services.integrations.llm_text_adapter import OpenAITextDraftAdapter
 
@@ -36,7 +38,7 @@ def _mock_llm(monkeypatch, body: dict):
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, m: json.dumps(body),
+        lambda self, m, **kwargs: json.dumps(body),
     )
 
 
@@ -56,7 +58,7 @@ def test_list_draft_sessions_after_preview(client, tenant, monkeypatch):
     client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Brief text"},
+        json=ai_draft_preview_request(creation_prompt_text='Brief text'),
     )
     r = client.get(
         "/api/v1/tasks/ai-draft-sessions",
@@ -76,7 +78,7 @@ def test_get_draft_session_roundtrip(client, tenant, monkeypatch):
     prev = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Roundtrip"},
+        json=ai_draft_preview_request(creation_prompt_text='Roundtrip'),
     )
     sid = prev.json()["draft_session_id"]
     r = client.get(
@@ -97,7 +99,7 @@ def test_delete_draft_session(client, tenant, monkeypatch):
     prev = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "To discard"},
+        json=ai_draft_preview_request(creation_prompt_text='To discard'),
     )
     sid = prev.json()["draft_session_id"]
     d = client.delete(
@@ -118,13 +120,13 @@ def test_patch_draft_session_updates_brief(client, tenant, monkeypatch):
     prev = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Original"},
+        json=ai_draft_preview_request(creation_prompt_text='Original'),
     )
     sid = prev.json()["draft_session_id"]
     r = client.patch(
         f"/api/v1/tasks/ai-draft-sessions/{sid}",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Patched brief"},
+        json={"master_prompt_text": "M", "creation_prompt_text": "Patched brief"},
     )
     assert r.status_code == 200
     assert r.json()["brief"] == "Patched brief"

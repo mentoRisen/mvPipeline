@@ -14,6 +14,11 @@ from app.config import (
     AI_TASK_DRAFT_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
 )
+from app.services.integrations.ai_draft_llm_config import (
+    resolve_openai_model,
+    resolve_reasoning_effort,
+)
+from app.services.integrations.ai_draft_response_schema import draft_bundle_json_schema
 
 
 class TextDraftAdapterError(RuntimeError):
@@ -28,8 +33,25 @@ class TextDraftUpstreamError(TextDraftAdapterError):
     """Raised when the upstream provider fails or returns unusable content."""
 
 
+def _openai_error_detail(response: requests.Response | None) -> str:
+    """Best-effort OpenAI error message for operators (no secrets)."""
+    if response is None:
+        return ""
+    try:
+        body = response.json()
+        err = body.get("error") if isinstance(body, dict) else None
+        if isinstance(err, dict):
+            message = err.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()[:500]
+    except ValueError:
+        pass
+    text = (response.text or "").strip()
+    return text[:500] if text else ""
+
+
 class OpenAITextDraftAdapter:
-    """Generate structured task draft bundles from a natural-language brief."""
+    """Generate structured task draft bundles via OpenAI Chat Completions."""
 
     def __init__(
         self,
@@ -48,50 +70,50 @@ class OpenAITextDraftAdapter:
         self.max_bundle_items = max_bundle_items
         self.session = session or requests.Session()
 
-    def _system_prompt(self) -> str:
-        return (
-            "You generate one or more draft tasks for template `instagram_post` from the "
-            "user's campaign brief. Each draft task must include one or more draft jobs. "
-            "Respond with JSON only using this shape: "
-            '{"items":['
-            '{"task":{"name":"...","template":"instagram_post","meta":{},"post":{}},'
-            '"jobs":[{"generator":"...","purpose":"...","prompt":{},"order":0}],'
-            '"warnings":[]}]} '
-            f"Use at most {self.max_bundle_items} items. "
-            "Prefer multiple items when the brief clearly describes distinct posts or angles. "
-            "Do not include tenant ids, credentials, or commentary."
-        )
-
     def build_preview_messages(
         self,
         *,
-        brief: str,
+        master_prompt_text: str,
+        creation_prompt_text: str,
         tenant_context: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """OpenAI ``messages`` array for logging and ``complete_preview_chat``."""
-        return [
-            {"role": "system", "content": self._system_prompt()},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "brief": brief,
-                        "tenant_context": tenant_context,
-                    }
-                ),
-            },
-        ]
+        from app.services.ai_draft_conversation import build_initial_preview_messages
 
-    def complete_preview_chat(self, messages: list[dict[str, Any]]) -> str:
+        return build_initial_preview_messages(
+            master_prompt_text=master_prompt_text,
+            creation_prompt_text=creation_prompt_text,
+            tenant_context=tenant_context,
+        )
+
+    def complete_preview_chat(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model_token: str | None = None,
+        reasoning_token: str | None = None,
+        max_tasks: int,
+        max_jobs: int,
+    ) -> str:
         """POST chat completion; return assistant message content (raw string)."""
         if not self.api_key:
             raise TextDraftUpstreamError("AI draft preview is not configured")
 
-        payload = {
-            "model": self.model,
-            "response_format": {"type": "json_object"},
+        resolved_model = resolve_openai_model(model_token) if model_token else self.model
+        reasoning_effort = resolve_reasoning_effort(reasoning_token)
+        task_cap = min(max(1, max_tasks), min(10, self.max_bundle_items))
+        job_cap = max(1, min(10, max_jobs))
+
+        payload: dict[str, Any] = {
+            "model": resolved_model,
+            "response_format": draft_bundle_json_schema(
+                max_items=task_cap,
+                max_jobs=job_cap,
+            ),
             "messages": messages,
         }
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
 
         try:
             response = self.session.post(
@@ -106,6 +128,12 @@ class OpenAITextDraftAdapter:
             response.raise_for_status()
         except requests.Timeout as exc:
             raise TextDraftUpstreamError("AI draft preview timed out") from exc
+        except requests.HTTPError as exc:
+            detail = _openai_error_detail(exc.response)
+            message = "AI draft preview request failed"
+            if detail:
+                message = f"{message}: {detail}"
+            raise TextDraftUpstreamError(message) from exc
         except requests.RequestException as exc:
             raise TextDraftUpstreamError("AI draft preview request failed") from exc
 
@@ -147,12 +175,29 @@ class OpenAITextDraftAdapter:
     def generate_campaign_draft(
         self,
         *,
-        brief: str,
+        master_prompt_text: str,
+        creation_prompt_text: str,
         tenant_context: dict[str, Any],
+        model_token: str | None = None,
+        reasoning_token: str | None = None,
+        max_tasks: int = 2,
+        max_jobs: int = 4,
     ) -> dict[str, Any]:
         """Return raw draft JSON: ``{\"items\":[...]}`` with instagram_post tasks."""
         messages = self.build_preview_messages(
-            brief=brief, tenant_context=tenant_context
+            master_prompt_text=master_prompt_text,
+            creation_prompt_text=creation_prompt_text,
+            tenant_context=tenant_context,
         )
-        content = self.complete_preview_chat(messages)
+        content = self.complete_preview_chat(
+            messages,
+            model_token=model_token,
+            reasoning_token=reasoning_token,
+            max_tasks=max_tasks,
+            max_jobs=max_jobs,
+        )
         return self.parse_campaign_json_from_assistant(content)
+
+    def resolved_model_for_logging(self, model_token: str | None = None) -> str:
+        """Model id used on the wire (for transcript logging)."""
+        return resolve_openai_model(model_token) if model_token else self.model

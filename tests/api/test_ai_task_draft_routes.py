@@ -17,6 +17,8 @@ from app.services.integrations.llm_text_adapter import (
 )
 from sqlalchemy.exc import IntegrityError
 
+from conftest import ai_draft_preview_request
+
 
 class StubConfirmService:
     def __init__(self, result):
@@ -58,14 +60,14 @@ def test_ai_draft_preview_route_returns_bundle(client, tenant, monkeypatch):
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, m: json.dumps(llm_body),
+        lambda self, m, **kwargs: json.dumps(llm_body),
     )
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
 
     response = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
 
     assert response.status_code == 200
@@ -81,10 +83,70 @@ def test_ai_draft_preview_route_rejects_tenant_fields_in_body(client, tenant):
     response = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={
-            "brief": "Create a launch post",
-            "tenant_id": "not-allowed",
-        },
+        json={**ai_draft_preview_request(), "tenant_id": "not-allowed"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_ai_draft_preview_route_rejects_invalid_max_tasks(client, tenant):
+    response = client.post(
+        "/api/v1/tasks/ai-draft-preview",
+        headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
+        json={**ai_draft_preview_request(), "max_tasks": 11},
+    )
+
+    assert response.status_code == 422
+
+
+def test_ai_draft_preview_route_passes_limits_to_adapter(client, tenant, monkeypatch):
+    captured = {}
+
+    def _capture(self, messages, **kwargs):
+        captured.update(kwargs)
+        return json.dumps(
+            {
+                "items": [
+                    {
+                        "task": {
+                            "name": "Post",
+                            "template": "instagram_post",
+                            "meta": {"theme": "t"},
+                            "post": {"caption": "c"},
+                        },
+                        "jobs": [
+                            {
+                                "generator": "dalle",
+                                "purpose": "imagecontent",
+                                "prompt": {"prompt": "draw"},
+                                "order": 0,
+                            }
+                        ],
+                        "warnings": [],
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(OpenAITextDraftAdapter, "complete_preview_chat", _capture)
+    monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
+
+    response = client.post(
+        "/api/v1/tasks/ai-draft-preview",
+        headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
+        json={**ai_draft_preview_request(), "max_tasks": 3, "max_jobs": 5},
+    )
+
+    assert response.status_code == 200
+    assert captured["max_tasks"] == 3
+    assert captured["max_jobs"] == 5
+
+
+def test_ai_draft_preview_route_rejects_legacy_brief_field(client, tenant):
+    response = client.post(
+        "/api/v1/tasks/ai-draft-preview",
+        headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
+        json={"brief": "legacy field"},
     )
 
     assert response.status_code == 422
@@ -94,7 +156,7 @@ def test_ai_draft_preview_route_requires_valid_tenant_header(client):
     response = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": "bad-uuid", "Authorization": "Bearer test"},
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
 
     assert response.status_code == 400
@@ -105,14 +167,14 @@ def test_ai_draft_preview_route_maps_validation_errors(client, tenant, monkeypat
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, m: json.dumps({"items": []}),
+        lambda self, m, **kwargs: json.dumps({"items": []}),
     )
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
 
     response = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
 
     assert response.status_code == 200
@@ -168,14 +230,14 @@ def test_ai_draft_preview_route_validation_error_includes_field_path(client, ten
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, m: json.dumps(bad),
+        lambda self, m, **kwargs: json.dumps(bad),
     )
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
 
     response = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
     assert response.status_code == 200
     sid = response.json()["draft_session_id"]
@@ -199,7 +261,7 @@ def test_ai_draft_preview_route_maps_refusals(client, tenant, monkeypatch):
     response = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
 
     assert response.status_code == 200
@@ -216,7 +278,7 @@ def test_ai_draft_preview_route_maps_upstream_failures(client, tenant, monkeypat
     response = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
 
     assert response.status_code == 200
@@ -402,7 +464,7 @@ def test_ai_draft_preview_route_returns_404_for_unknown_tenant(client):
             "X-Tenant-Id": "00000000-0000-0000-0000-000000000000",
             "Authorization": "Bearer test",
         },
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
 
     assert response.status_code == 404
@@ -414,14 +476,18 @@ def test_ai_draft_preview_route_requires_instruction_for_iteration(client, tenan
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
         json={
-            "brief": "update this draft",
+            "creation_prompt_text": "update this draft",
             "draft_session_id": "00000000-0000-0000-0000-000000000000",
             "iteration_mode": "regenerate",
             "target_scope": "campaign",
         },
     )
     assert response.status_code == 422
-    assert "instruction_text" in response.json()["detail"]
+    detail = response.json()["detail"]
+    if isinstance(detail, list):
+        assert any("instruction_text" in str(item) for item in detail)
+    else:
+        assert "instruction_text" in detail
 
 
 def test_ai_draft_preview_route_rejects_non_campaign_scope(client, tenant, monkeypatch):
@@ -430,7 +496,7 @@ def test_ai_draft_preview_route_rejects_non_campaign_scope(client, tenant, monke
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
         json={
-            "brief": "update this draft",
+            "creation_prompt_text": "update this draft",
             "draft_session_id": "00000000-0000-0000-0000-000000000000",
             "iteration_mode": "targeted_intent",
             "instruction_text": "rewrite headline",
@@ -447,7 +513,7 @@ def test_ai_draft_preview_route_rejects_iteration_without_session_id(client, ten
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
         json={
-            "brief": "update this draft",
+            "creation_prompt_text": "update this draft",
             "iteration_mode": "regenerate",
             "instruction_text": "tighten tone",
             "target_scope": "campaign",
@@ -463,7 +529,7 @@ def test_ai_draft_preview_route_rejects_invalid_iteration_mode(client, tenant, m
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
         json={
-            "brief": "update this draft",
+            "creation_prompt_text": "update this draft",
             "draft_session_id": "00000000-0000-0000-0000-000000000000",
             "iteration_mode": "bad_mode",
             "instruction_text": "tighten tone",
@@ -482,20 +548,20 @@ def test_ai_draft_preview_route_returns_409_when_draft_cap_reached(
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, m: json.dumps(_sample_bundle().model_dump(mode="json")),
+        lambda self, m, **kwargs: json.dumps(_sample_bundle().model_dump(mode="json")),
     )
 
     first = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "first"},
+        json=ai_draft_preview_request(creation_prompt_text="first"),
     )
     assert first.status_code == 200
 
     second = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "second"},
+        json=ai_draft_preview_request(creation_prompt_text="second"),
     )
     assert second.status_code == 409
     detail = second.json()["detail"]
@@ -507,19 +573,19 @@ def test_ai_draft_restore_endpoint_restores_snapshot(client, tenant, monkeypatch
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, m: json.dumps(llm_body),
+        lambda self, m, **kwargs: json.dumps(llm_body),
     )
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
     first = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "first"},
+        json=ai_draft_preview_request(creation_prompt_text="first"),
     )
     sid = first.json()["draft_session_id"]
     second = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "second", "draft_session_id": sid},
+        json=ai_draft_preview_request(creation_prompt_text="second", draft_session_id=str(sid)),
     )
     assert second.status_code == 200
     detail = client.get(
@@ -546,14 +612,14 @@ def test_ai_draft_confirm_second_submit_with_session_returns_404(
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, m: json.dumps(llm_body),
+        lambda self, m, **kwargs: json.dumps(llm_body),
     )
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
 
     prev = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
     assert prev.status_code == 200
     sid = prev.json()["draft_session_id"]
@@ -610,14 +676,14 @@ def test_ai_draft_confirm_allows_failed_session_with_existing_bundle(
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, m: json.dumps(llm_body),
+        lambda self, m, **kwargs: json.dumps(llm_body),
     )
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
 
     prev = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
     assert prev.status_code == 200
     sid = prev.json()["draft_session_id"]
@@ -674,14 +740,14 @@ def test_ai_draft_confirm_validation_persists_last_error(
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, m: json.dumps(llm_body),
+        lambda self, m, **kwargs: json.dumps(llm_body),
     )
     monkeypatch.setattr("app.api.routes.current_tenant", lambda: tenant)
 
     prev = client.post(
         "/api/v1/tasks/ai-draft-preview",
         headers={"X-Tenant-Id": str(tenant.id), "Authorization": "Bearer test"},
-        json={"brief": "Create a launch post"},
+        json=ai_draft_preview_request(),
     )
     sid = prev.json()["draft_session_id"]
 

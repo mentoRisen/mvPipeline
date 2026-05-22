@@ -104,6 +104,15 @@ class AiDraftSession(SQLModel, table=True):
 
     brief: str = Field(sa_column=Column(Text))
 
+    master_prompt_text: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+    creation_prompt_text: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+
     bundle: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column(JSON),

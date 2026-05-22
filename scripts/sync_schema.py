@@ -30,6 +30,8 @@ REQUIRED_TABLE_COLUMNS = {
         "tenant_id",
         "user_id",
         "brief",
+        "master_prompt_text",
+        "creation_prompt_text",
         "bundle",
         "last_error",
         "status",
@@ -70,6 +72,8 @@ ADD_COLUMN_DDL = {
     "ai_draft_sessions": {
         # Existing deployments created this table before async preview lifecycle existed.
         "preview_status": "ALTER TABLE ai_draft_sessions ADD COLUMN preview_status VARCHAR(32) NOT NULL DEFAULT 'succeeded'",
+        "master_prompt_text": "ALTER TABLE ai_draft_sessions ADD COLUMN master_prompt_text TEXT NULL",
+        "creation_prompt_text": "ALTER TABLE ai_draft_sessions ADD COLUMN creation_prompt_text TEXT NULL",
     },
 }
 
