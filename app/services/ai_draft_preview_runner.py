@@ -10,6 +10,7 @@ import app.config as app_config
 from app.api.schemas import AiTaskDraftValidationErrorBody
 from app.models.ai_draft_communication_event import AiDraftCommunicationKind
 from app.services import ai_draft_session_repo
+from app.services.ai_draft_conversation import build_follow_up_messages_from_events
 from app.services.ai_task_draft_service import (
     AiTaskDraftItemValidationError,
     AiTaskDraftService,
@@ -40,10 +41,15 @@ def run_ai_draft_preview_job(
     draft_session_id: UUID,
     tenant_id: UUID,
     user_id: UUID,
-    brief: str,
+    master_prompt_text: str,
+    creation_prompt_text: str,
+    model_token: str | None = None,
+    reasoning_token: str | None = None,
     iteration_mode: str | None = None,
     instruction_text: str | None = None,
     target_scope: str | None = None,
+    max_tasks: int = 2,
+    max_jobs: int = 4,
 ) -> None:
     """Run LLM preview: transcript rows, then bundle + terminal preview_status."""
 
@@ -59,17 +65,25 @@ def run_ai_draft_preview_job(
         return
 
     adapter = OpenAITextDraftAdapter(api_key=app_config.OPENAI_API_KEY)
-    service = AiTaskDraftService(adapter)
-    effective_brief = brief
-    if instruction_text and instruction_text.strip():
-        mode = iteration_mode or "regenerate"
-        effective_brief = (
-            f"{brief}\n\n"
-            f"[Follow-up iteration mode: {mode}]\n"
-            f"[Target scope: {target_scope or 'campaign'}]\n"
-            f"Apply this instruction while preserving campaign context:\n"
-            f"{instruction_text.strip()}"
-        )
+    service = AiTaskDraftService(
+        adapter,
+        max_bundle_items=max_tasks,
+        max_jobs_per_item=max_jobs,
+    )
+    tenant_context = AiTaskDraftService.build_tenant_context(tenant)
+    is_follow_up = bool(instruction_text and instruction_text.strip())
+
+    user_input_payload: dict[str, Any] = {
+        "master_prompt_text": master_prompt_text,
+        "creation_prompt_text": creation_prompt_text,
+        "model": model_token,
+        "reasoning": reasoning_token,
+        "max_tasks": max_tasks,
+        "max_jobs": max_jobs,
+        "iteration_mode": iteration_mode,
+        "instruction_text": instruction_text,
+        "target_scope": target_scope,
+    }
 
     try:
         ai_draft_session_repo.append_communication_event(
@@ -77,28 +91,57 @@ def run_ai_draft_preview_job(
             tenant_id=tenant_id,
             user_id=user_id,
             kind=AiDraftCommunicationKind.USER_INPUT,
-            payload={
-                "brief": effective_brief,
-                "iteration_mode": iteration_mode,
-                "instruction_text": instruction_text,
-                "target_scope": target_scope,
-            },
+            payload=user_input_payload,
         )
-        messages = adapter.build_preview_messages(
-            brief=effective_brief,
-            tenant_context=AiTaskDraftService.build_tenant_context(tenant),
-        )
+
+        if is_follow_up:
+            events = ai_draft_session_repo.list_communication_events(
+                draft_session_id=draft_session_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+            )
+            try:
+                messages = build_follow_up_messages_from_events(
+                    events,
+                    instruction_text=instruction_text.strip(),
+                    iteration_mode=iteration_mode,
+                    target_scope=target_scope,
+                )
+            except ValueError as exc:
+                _record_failure(
+                    draft_session_id=draft_session_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    message=str(exc),
+                    error_type="conversation",
+                )
+                return
+        else:
+            messages = adapter.build_preview_messages(
+                master_prompt_text=master_prompt_text,
+                creation_prompt_text=creation_prompt_text,
+                tenant_context=tenant_context,
+            )
+
+        resolved_model = adapter.resolved_model_for_logging(model_token)
         ai_draft_session_repo.append_communication_event(
             draft_session_id=draft_session_id,
             tenant_id=tenant_id,
             user_id=user_id,
             kind=AiDraftCommunicationKind.PROMPT_TO_AI,
             payload={
-                "model": adapter.model,
+                "model": resolved_model,
                 "messages": messages,
+                "reasoning": reasoning_token,
             },
         )
-        raw_text = adapter.complete_preview_chat(messages)
+        raw_text = adapter.complete_preview_chat(
+            messages,
+            model_token=model_token,
+            reasoning_token=reasoning_token,
+            max_tasks=max_tasks,
+            max_jobs=max_jobs,
+        )
         ai_draft_session_repo.append_communication_event(
             draft_session_id=draft_session_id,
             tenant_id=tenant_id,

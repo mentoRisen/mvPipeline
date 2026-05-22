@@ -41,11 +41,12 @@ def test_runner_failure_preserves_previous_bundle(tenant, auth_user, monkeypatch
     ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="rerun",
+        master_prompt_text="Master",
+        creation_prompt_text="rerun",
         draft_session_id=sid,
     )
 
-    def _raise_upstream(self, _messages):
+    def _raise_upstream(self, _messages, **kwargs):
         raise RuntimeError("Authorization: Bearer super-secret")
 
     monkeypatch.setattr(OpenAITextDraftAdapter, "complete_preview_chat", _raise_upstream)
@@ -53,7 +54,8 @@ def test_runner_failure_preserves_previous_bundle(tenant, auth_user, monkeypatch
         draft_session_id=sid,
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="rerun",
+        master_prompt_text="Master",
+        creation_prompt_text="rerun",
         iteration_mode="regenerate",
         instruction_text="refresh",
         target_scope="campaign",
@@ -75,30 +77,34 @@ def test_runner_success_appends_round_events(tenant, auth_user, monkeypatch):
     monkeypatch.setattr(
         OpenAITextDraftAdapter,
         "complete_preview_chat",
-        lambda self, _messages: json.dumps(_bundle("After")),
+        lambda self, _messages, **kwargs: json.dumps(_bundle("After")),
     )
     sid = ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="first",
+        master_prompt_text="Master",
+        creation_prompt_text="first",
     )
     run_ai_draft_preview_job(
         draft_session_id=sid,
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="first",
+        master_prompt_text="Master",
+        creation_prompt_text="first",
     )
     ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="second",
+        master_prompt_text="Master",
+        creation_prompt_text="second",
         draft_session_id=sid,
     )
     run_ai_draft_preview_job(
         draft_session_id=sid,
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="second",
+        master_prompt_text="Master",
+        creation_prompt_text="second",
         iteration_mode="targeted_intent",
         instruction_text="improve tone",
         target_scope="campaign",

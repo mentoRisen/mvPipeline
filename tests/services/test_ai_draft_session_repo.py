@@ -218,7 +218,8 @@ def test_start_preview_run_rejects_new_session_when_cap_reached(
     first = ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="first",
+        master_prompt_text="Master",
+        creation_prompt_text="first",
     )
     assert first is not None
 
@@ -226,7 +227,8 @@ def test_start_preview_run_rejects_new_session_when_cap_reached(
         ai_draft_session_repo.start_preview_run(
             tenant_id=tenant.id,
             user_id=auth_user.id,
-            brief="second",
+            master_prompt_text="Master",
+            creation_prompt_text="second",
         )
         assert False, "Expected cap enforcement HTTPException"
     except HTTPException as exc:
@@ -242,7 +244,8 @@ def test_start_preview_run_rerun_allowed_at_cap(
     sid = ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="first",
+        master_prompt_text="Master",
+        creation_prompt_text="first",
     )
     row = db_session.get(AiDraftSession, sid)
     row.preview_status = "succeeded"
@@ -252,7 +255,8 @@ def test_start_preview_run_rerun_allowed_at_cap(
     same_sid = ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="updated brief",
+        master_prompt_text="Master",
+        creation_prompt_text="updated brief",
         draft_session_id=sid,
     )
     assert same_sid == sid
@@ -286,7 +290,8 @@ def test_finalize_preview_failure_preserves_existing_bundle(tenant, auth_user):
     ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="rerun",
+        master_prompt_text="Master",
+        creation_prompt_text="rerun",
         draft_session_id=sid,
     )
     ai_draft_session_repo.finalize_preview_failure(
@@ -333,7 +338,8 @@ def test_finalize_preview_success_creates_undo_snapshot(tenant, auth_user):
     ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="second",
+        master_prompt_text="Master",
+        creation_prompt_text="second",
         draft_session_id=sid,
     )
     ai_draft_session_repo.finalize_preview_success(
@@ -373,7 +379,8 @@ def test_restore_snapshot_bundle_rejects_when_running(tenant, auth_user):
     sid = ai_draft_session_repo.start_preview_run(
         tenant_id=tenant.id,
         user_id=auth_user.id,
-        brief="running",
+        master_prompt_text="Master",
+        creation_prompt_text="running",
     )
     with pytest.raises(HTTPException) as exc:
         ai_draft_session_repo.restore_snapshot_bundle(

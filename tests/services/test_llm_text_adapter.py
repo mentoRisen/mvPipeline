@@ -48,18 +48,72 @@ def build_adapter(result, *, api_key="test-key"):
     )
 
 
+def _prompt_kwargs():
+    return {
+        "master_prompt_text": "Generate instagram_post drafts.",
+        "creation_prompt_text": "Create a launch post",
+        "tenant_context": {"name": "Acme"},
+    }
+
+
+def test_build_preview_messages_uses_master_and_creation():
+    adapter = build_adapter(FakeResponse({}))
+    messages = adapter.build_preview_messages(
+        master_prompt_text="System rules",
+        creation_prompt_text="User campaign",
+        tenant_context={"name": "Acme"},
+    )
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == "System rules"
+    assert messages[1]["role"] == "user"
+    assert "User campaign" in messages[1]["content"]
+
+
+def test_complete_preview_chat_uses_json_schema_format():
+    captured = {}
+
+    class CapturingSession(FakeSession):
+        def post(self, *args, **kwargs):
+            captured.update(kwargs.get("json") or {})
+            return FakeResponse(
+                {
+                    "choices": [
+                        {"message": {"content": '{"items":[]}'}}
+                    ]
+                }
+            )
+
+    adapter = OpenAITextDraftAdapter(
+        api_key="test-key",
+        session=CapturingSession(None),
+        model="fake-model",
+        api_url="https://example.test/v1/chat/completions",
+    )
+    adapter.complete_preview_chat(
+        [{"role": "user", "content": "hi"}],
+        max_tasks=3,
+        max_jobs=5,
+    )
+    assert captured["response_format"]["type"] == "json_schema"
+    schema = captured["response_format"]["json_schema"]["schema"]
+    assert schema["properties"]["items"]["maxItems"] == 3
+    assert (
+        schema["properties"]["items"]["items"]["properties"]["jobs"]["maxItems"] == 5
+    )
+
+
 def test_adapter_requires_api_key():
     adapter = build_adapter(FakeResponse({}), api_key=None)
 
     with pytest.raises(TextDraftUpstreamError):
-        adapter.generate_campaign_draft(brief="Create a launch post", tenant_context={})
+        adapter.generate_campaign_draft(**_prompt_kwargs())
 
 
 def test_adapter_maps_timeout_errors():
     adapter = build_adapter(requests.Timeout("slow"))
 
     with pytest.raises(TextDraftUpstreamError):
-        adapter.generate_campaign_draft(brief="Create a launch post", tenant_context={})
+        adapter.generate_campaign_draft(**_prompt_kwargs())
 
 
 def test_adapter_maps_refusals():
@@ -78,7 +132,7 @@ def test_adapter_maps_refusals():
     )
 
     with pytest.raises(TextDraftRefusalError):
-        adapter.generate_campaign_draft(brief="Create a launch post", tenant_context={})
+        adapter.generate_campaign_draft(**_prompt_kwargs())
 
 
 def test_adapter_rejects_non_json_content():
@@ -97,7 +151,7 @@ def test_adapter_rejects_non_json_content():
     )
 
     with pytest.raises(TextDraftUpstreamError):
-        adapter.generate_campaign_draft(brief="Create a launch post", tenant_context={})
+        adapter.generate_campaign_draft(**_prompt_kwargs())
 
 
 def test_adapter_accepts_list_shaped_content():
@@ -140,9 +194,6 @@ def test_adapter_accepts_list_shaped_content():
         )
     )
 
-    result = adapter.generate_campaign_draft(
-        brief="Create a launch post",
-        tenant_context={"name": "Acme"},
-    )
+    result = adapter.generate_campaign_draft(**_prompt_kwargs())
 
     assert result["items"][0]["task"]["template"] == "instagram_post"

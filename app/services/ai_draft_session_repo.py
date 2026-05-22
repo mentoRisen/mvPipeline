@@ -33,6 +33,32 @@ UNDO_SNAPSHOT_MAX_PER_SESSION = 3
 REDACTED_PLACEHOLDER = "***redacted***"
 
 
+def _legacy_brief_from_prompts(
+    *,
+    creation_prompt_text: str,
+    master_prompt_text: str = "",
+) -> str:
+    """Resume label / legacy ``brief`` column value (creation preferred)."""
+    creation = creation_prompt_text.strip()
+    if creation:
+        return creation
+    return master_prompt_text.strip()
+
+
+def _apply_prompt_fields_to_session(
+    row: AiDraftSession,
+    *,
+    master_prompt_text: str,
+    creation_prompt_text: str,
+) -> None:
+    row.master_prompt_text = master_prompt_text.strip() or None
+    row.creation_prompt_text = creation_prompt_text.strip() or None
+    row.brief = _legacy_brief_from_prompts(
+        creation_prompt_text=creation_prompt_text,
+        master_prompt_text=master_prompt_text,
+    )
+
+
 def _utcnow() -> datetime:
     return datetime.utcnow()
 
@@ -234,7 +260,8 @@ def start_preview_run(
     *,
     tenant_id: UUID,
     user_id: UUID,
-    brief: str,
+    master_prompt_text: str,
+    creation_prompt_text: str,
     draft_session_id: Optional[UUID] = None,
 ) -> UUID:
     """Create or reset a draft session for async preview; ``preview_status`` becomes RUNNING."""
@@ -257,7 +284,11 @@ def start_preview_run(
                     status_code=409,
                     detail="AI draft preview already in progress for this session",
                 )
-            row.brief = brief
+            _apply_prompt_fields_to_session(
+                row,
+                master_prompt_text=master_prompt_text,
+                creation_prompt_text=creation_prompt_text,
+            )
             if row.bundle is None:
                 row.bundle = {"items": []}
             row.last_error = None
@@ -287,7 +318,7 @@ def start_preview_run(
         row = AiDraftSession(
             tenant_id=tenant_id,
             user_id=user_id,
-            brief=brief,
+            brief="",
             bundle={"items": []},
             last_error=None,
             status=AiDraftSessionStatus.ACTIVE,
@@ -295,6 +326,11 @@ def start_preview_run(
             expires_at=exp,
             created_at=now,
             updated_at=now,
+        )
+        _apply_prompt_fields_to_session(
+            row,
+            master_prompt_text=master_prompt_text,
+            creation_prompt_text=creation_prompt_text,
         )
         db.add(row)
         db.commit()
@@ -469,8 +505,15 @@ def save_after_preview(
     brief: str,
     items: list[dict[str, Any]],
     draft_session_id: Optional[UUID] = None,
+    master_prompt_text: str = "",
+    creation_prompt_text: Optional[str] = None,
 ) -> UUID:
     """Create or update a draft session after a successful AI preview."""
+    creation = (
+        creation_prompt_text
+        if creation_prompt_text is not None
+        else brief
+    )
 
     bundle = bundle_dict_from_items(items)
     assert_bundle_within_size(bundle)
@@ -488,7 +531,11 @@ def save_after_preview(
                 or row.expires_at <= now
             ):
                 raise HTTPException(status_code=404, detail="AI draft session not found")
-            row.brief = brief
+            _apply_prompt_fields_to_session(
+                row,
+                master_prompt_text=master_prompt_text,
+                creation_prompt_text=creation,
+            )
             row.bundle = bundle
             row.last_error = None
             row.preview_status = AiDraftPreviewStatus.SUCCEEDED
@@ -518,7 +565,7 @@ def save_after_preview(
         row = AiDraftSession(
             tenant_id=tenant_id,
             user_id=user_id,
-            brief=brief,
+            brief="",
             bundle=bundle,
             last_error=None,
             status=AiDraftSessionStatus.ACTIVE,
@@ -526,6 +573,11 @@ def save_after_preview(
             expires_at=exp,
             created_at=now,
             updated_at=now,
+        )
+        _apply_prompt_fields_to_session(
+            row,
+            master_prompt_text=master_prompt_text,
+            creation_prompt_text=creation,
         )
         session.add(row)
         session.commit()
@@ -538,12 +590,19 @@ def patch_session_bundle(
     session_id: UUID,
     tenant_id: UUID,
     user_id: UUID,
-    brief: Optional[str],
-    items: Optional[list[dict[str, Any]]],
+    brief: Optional[str] = None,
+    master_prompt_text: Optional[str] = None,
+    creation_prompt_text: Optional[str] = None,
+    items: Optional[list[dict[str, Any]]] = None,
 ) -> AiDraftSession:
-    """Replace bundle (and optional brief) for autosave."""
+    """Replace bundle and/or prompt fields for autosave."""
 
-    if items is None and brief is None:
+    if (
+        items is None
+        and brief is None
+        and master_prompt_text is None
+        and creation_prompt_text is None
+    ):
         raise HTTPException(status_code=422, detail="Nothing to update")
 
     now = _utcnow()
@@ -567,8 +626,27 @@ def patch_session_bundle(
             bundle = bundle_dict_from_items(items)
             assert_bundle_within_size(bundle)
             row.bundle = bundle
-        if brief is not None:
-            row.brief = brief
+        if (
+            brief is not None
+            or master_prompt_text is not None
+            or creation_prompt_text is not None
+        ):
+            master = (
+                master_prompt_text
+                if master_prompt_text is not None
+                else (row.master_prompt_text or "")
+            )
+            if creation_prompt_text is not None:
+                creation = creation_prompt_text
+            elif brief is not None:
+                creation = brief
+            else:
+                creation = row.creation_prompt_text or row.brief or ""
+            _apply_prompt_fields_to_session(
+                row,
+                master_prompt_text=master,
+                creation_prompt_text=creation,
+            )
         row.last_error = None
         row.expires_at = _default_expires_at()
         row.updated_at = now
