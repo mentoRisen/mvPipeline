@@ -47,11 +47,7 @@ def test_process_job_gptimage2_happy_path_updates_result(
         "app.services.jobs.processor_gptimage2.generate_image",
         lambda **kwargs: "/output/task-1/job-1.jpeg",
     )
-    monkeypatch.setattr(
-        job_processor,
-        "uploadToPublic",
-        lambda path: f"https://public.example{path}",
-    )
+    monkeypatch.setenv("PUBLIC_URL", "https://public.example")
     job = _create_task_and_job(db_session=db_session, generator="GptImage2")
 
     job_processor.process_job(job)

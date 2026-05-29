@@ -1315,6 +1315,32 @@ def override_task_processing(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@scoped_router.post("/tasks/{task_id}/try-again", response_model=TaskResponse)
+def try_again_task(
+    task_id: UUID,
+    tenant: Tenant = Depends(tenant_context_dependency),
+):
+    """Reset a failed task to ready so publication can be retried.
+
+    Moves task from FAILED to READY.
+
+    Args:
+        task_id: UUID of the task to reset
+
+    Returns:
+        Updated task
+
+    Raises:
+        HTTPException: 404 if task not found, 400 if invalid status transition
+    """
+    _task_for_current_tenant_or_404(task_id, tenant)
+    try:
+        task = task_repo.try_again_failed_task(task_id)
+        return TaskResponse.model_validate(task)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @scoped_router.get("/tasks/status/{status}", response_model=TaskListResponse)
 def list_tasks_by_status_route(
     status: TaskStatus,

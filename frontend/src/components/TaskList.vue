@@ -109,7 +109,7 @@
       class="modal-overlay"
       @click="closeCreateFromJsonModal"
     >
-      <div class="modal-content json-create-modal" @click.stop>
+      <div class="modal-content json-create-modal modal-content--wide" @click.stop>
         <h3>Create Task from JSON</h3>
         <div class="form-group">
           <label>Template <span class="required">*</span></label>
@@ -149,7 +149,7 @@
 
     <!-- Error/Success Modal -->
     <div v-if="error" class="modal-overlay" @click="dismissMessage">
-      <div class="modal-content message-modal" @click.stop>
+      <div class="modal-content message-modal modal-content--compact" @click.stop>
         <div class="message-content message-error">
           <h3>Error</h3>
           <p>{{ error }}</p>
@@ -651,7 +651,4 @@ export default {
   color: #999;
 }
 
-.json-create-modal {
-  max-width: 100%;
-}
 </style>

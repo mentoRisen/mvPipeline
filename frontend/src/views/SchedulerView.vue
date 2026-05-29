@@ -613,7 +613,6 @@ export default {
 
 .modal-content {
   min-width: min(320px, 100%);
-  max-width: 100%;
 }
 
 .modal-content h3 {

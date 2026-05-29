@@ -98,13 +98,13 @@ This document describes the runtime behavior that is actually wired in the curre
   `app/services/jobs/processor.py` reloads the `Job` from DB -> sets `PROCESSING` -> dispatches by `job.generator`.
   `dalle` uses `app/services/jobs/processor_dalle.py`.
   `gptimage15` uses `app/services/jobs/processor_gptimage15.py`.
-  After image generation, `processor.py` optionally calls `app/services/ftpupload.py` to create a `public_url`, persists `Job.result`, and may move the parent `Task` to `PENDING_CONFIRMATION`.
+  After image generation, `processor.py` sets `Job.result.public_url` from `PUBLIC_URL` plus `image_path` via `app/services/public_url.py`, persists `Job.result`, and may move the parent `Task` to `PENDING_CONFIRMATION`.
 - Persistence touchpoints:
   writes `Job.status`, `Job.updated_at`, `Job.result`, and sometimes parent `Task.status` in MySQL; writes generated files under `output/{task_id}/{job_id}.jpeg`.
 - Integration touchpoints:
-  OpenAI Images API, optional FTP upload to public hosting.
+  OpenAI Images API; images are served from this host under `/output` (see `PUBLIC_URL`).
 - Notable risks or inconsistencies:
-  processing combines external HTTP calls, filesystem writes, FTP upload, DB writes, and task transition logic in one flow. FTP upload is best-effort, so a job can complete without a public URL, leaving later publish behavior to reconstruct or fail.
+  processing combines external HTTP calls, filesystem writes, DB writes, and task transition logic in one flow. `public_url` is omitted when `PUBLIC_URL` is unset; Instagram publish then fails until config is fixed.
 
 ### Publish Execution
 
@@ -213,7 +213,7 @@ This document describes the runtime behavior that is actually wired in the curre
 - Persistence touchpoints:
   local filesystem under `output/`; job records persist relative output paths in `Job.result`.
 - Integration touchpoints:
-  FTP upload may copy generated files to a public host; Instagram publish may consume either uploaded public URLs or URLs constructed from `PUBLIC_URL`.
+  Instagram publish builds image URLs from `PUBLIC_URL` and `Job.result.image_path` (nginx serves `/output/` on the app host).
 - Notable risks or inconsistencies:
   file persistence is partly local and partly externalized through FTP/public hosting; the resulting path/url contract is implicit in `Job.result`.
 

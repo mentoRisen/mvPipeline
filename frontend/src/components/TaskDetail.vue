@@ -13,6 +13,14 @@
           Override processing
         </button>
         <button
+          v-if="task.status === 'failed'"
+          @click="tryAgainTask"
+          class="btn-primary"
+          type="button"
+        >
+          Try again
+        </button>
+        <button
           type="button"
           class="btn-primary"
           @click="updateTask"
@@ -481,7 +489,7 @@
       class="modal-overlay"
       @click="closeJsonModal"
     >
-      <div class="modal-content json-modal" @click.stop>
+      <div class="modal-content json-modal modal-content--wide" @click.stop>
         <h3>Task JSON</h3>
         <p class="json-modal-help">
           This is a read-only JSON view of the current task object, including its jobs.
@@ -510,7 +518,7 @@
       class="modal-overlay"
       @click="closeJobImageModal"
     >
-      <div class="modal-content image-modal" @click.stop>
+      <div class="modal-content image-modal modal-content--fit" @click.stop>
         <img
           v-if="jobImageModalUrl"
           :src="jobImageModalUrl"
@@ -747,6 +755,15 @@ export default {
         this.showError(
           err.response?.data?.detail || 'Failed to override processing'
         )
+      }
+    },
+    async tryAgainTask() {
+      try {
+        await taskService.tryAgainTask(this.id)
+        this.showSuccess('Task reset to ready')
+        await this.loadTask()
+      } catch (err) {
+        this.showError(err.response?.data?.detail || 'Failed to reset task')
       }
     },
     openPublishPreview() {
@@ -1224,14 +1241,6 @@ export default {
   border: none;
   background: none;
   cursor: pointer;
-}
-
-.json-modal {
-  max-width: 100%;
-}
-
-.image-modal {
-  max-width: 100%;
 }
 
 .image-modal-img {

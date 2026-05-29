@@ -93,3 +93,40 @@ def test_draft_bundle_schema_includes_instagram_post_fields() -> None:
     assert '"theme"' in raw
     assert '"caption"' in raw
     assert '"prompt"' in raw
+
+
+def test_draft_bundle_schema_pins_template_to_instagram_post() -> None:
+    fmt = draft_bundle_json_schema(max_items=1, max_jobs=1)
+    task = (
+        fmt["json_schema"]["schema"]["properties"]["items"]["items"]["properties"]["task"]
+    )
+    assert task["properties"]["template"] == {
+        "type": "string",
+        "enum": ["instagram_post"],
+    }
+
+
+def test_draft_bundle_schema_pins_job_generators() -> None:
+    fmt = draft_bundle_json_schema(max_items=1, max_jobs=1)
+    job = (
+        fmt["json_schema"]["schema"]["properties"]["items"]["items"]["properties"]["jobs"][
+            "items"
+        ]
+    )
+    assert job["properties"]["generator"] == {
+        "type": "string",
+        "enum": ["dalle", "gptimage15", "gptimage2"],
+    }
+
+
+def test_draft_bundle_schema_pins_job_purpose_to_imagecontent() -> None:
+    fmt = draft_bundle_json_schema(max_items=1, max_jobs=1)
+    job = (
+        fmt["json_schema"]["schema"]["properties"]["items"]["items"]["properties"]["jobs"][
+            "items"
+        ]
+    )
+    assert job["properties"]["purpose"] == {
+        "type": "string",
+        "enum": ["imagecontent"],
+    }

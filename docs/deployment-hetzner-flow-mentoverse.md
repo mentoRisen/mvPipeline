@@ -174,6 +174,11 @@ DATABASE_URL=mysql+pymysql://mvpipeline:replace-with-strong-password@localhost:3
 AUTH_SECRET_KEY=replace-with-long-random-secret
 AUTH_ACCESS_TOKEN_EXPIRE_MINUTES=300
 OPENAI_API_KEY=replace-if-used
+AI_TASK_DRAFT_TIMEOUT_SECONDS=120
+# Base upstream timeout; high/medium reasoning multiplies this (high ≈ 2.5×, cap 600s).
+AI_TASK_DRAFT_MODEL_5_1=gpt-5.1
+AI_TASK_DRAFT_MODEL_5_4=gpt-5.4
+AI_TASK_DRAFT_MODEL_5_5=gpt-5.5
 SCHEDULER_TIMEZONE=UTC
 WORKER_CHECK_INTERVAL_SECONDS=30
 SCHEDULER_CHECK_INTERVAL_SECONDS=300
@@ -400,6 +405,7 @@ curl -sS https://flow.mentoverse.eu/health
   - Worker logs: `journalctl -u mvpipeline-worker -f`
   - Frontend logs: `journalctl -u mvpipeline-frontend-dev -f`
   - Output file exists under `/opt/mvPipeline/output/<task-id>/`
+  - `PUBLIC_URL` in `.env` (and tenant `env` when set) matches the host that serves `/output/` (here `https://flow.mentoverse.eu/`). Instagram publish fails with Graph API 400 if image URLs return 404.
 
 ## 12) Update / Sync Workflow
 

@@ -26,7 +26,7 @@ class TaskStatus(str, Enum):
         PUBLISHING -> PUBLISHED (when publishing completes successfully)
         PUBLISHING -> READY (when publishing fails, can retry)
         Any -> FAILED (on error)
-        FAILED -> PENDING_APPROVAL (retry)
+        FAILED -> READY (user retries after publish failure)
     """
     DRAFT = "draft"  # AI created, not yet submitted for approval
     PENDING_APPROVAL = "pending_approval"  # Waiting for user to approve processing
@@ -228,5 +228,12 @@ class Task(SQLModel, table=True):
         if self.status != TaskStatus.PROCESSING:
             raise ValueError(f"Cannot override processing in status {self.status.value}")
         self.status = TaskStatus.PENDING_CONFIRMATION
+        self.updated_at = datetime.utcnow()
+
+    def try_again_after_failure(self) -> None:
+        """Reset a failed task to ready so publication can be retried (user action)."""
+        if self.status != TaskStatus.FAILED:
+            raise ValueError(f"Cannot try again in status {self.status.value}")
+        self.status = TaskStatus.READY
         self.updated_at = datetime.utcnow()
 

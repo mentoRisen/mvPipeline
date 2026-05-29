@@ -358,3 +358,24 @@ def override_task_processing(task_id: UUID) -> Task:
     task.override_processing()
     return save(task)
 
+
+def try_again_failed_task(task_id: UUID) -> Task:
+    """Reset a failed task to ready so publication can be retried (user action).
+
+    Moves task from FAILED to READY.
+
+    Args:
+        task_id: The UUID of the task to reset
+
+    Returns:
+        The updated task
+
+    Raises:
+        ValueError: If task not found or not in FAILED status
+    """
+    task = get_task_by_id(task_id)
+    if not task:
+        raise ValueError(f"Task {task_id} not found")
+    task.try_again_after_failure()
+    return save(task)
+

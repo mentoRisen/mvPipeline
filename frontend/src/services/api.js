@@ -141,6 +141,11 @@ export const taskService = {
     return response.data
   },
 
+  async tryAgainTask(id) {
+    const response = await api.post(`/tasks/${id}/try-again`)
+    return response.data
+  },
+
   // Get tasks by status
   async getTasksByStatus(status, limit = 100) {
     const response = await api.get(`/tasks/status/${status}`, {

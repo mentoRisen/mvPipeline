@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from app.models.job import Job, JobStatus
 from app.models.task import Task, TaskStatus
 from app.db.engine import engine
-from app.services.ftpupload import uploadToPublic
+from app.services.public_url import public_url_for_image_path
 
 logger = logging.getLogger(__name__)
 
@@ -74,21 +74,7 @@ def process_job(job: Job) -> None:
                     task_id=str(job.task_id),
                     job_id=str(job.id)
                 )
-                # Upload generated image to public FTP (best-effort)
-                public_url = None
-                try:
-                    public_url = uploadToPublic(image_path)
-                    logger.info(
-                        "Uploaded DALL-E image for job %s to public FTP: %s",
-                        job.id,
-                        public_url,
-                    )
-                except Exception as ftp_err:
-                    logger.error(
-                        "Failed to upload DALL-E image for job %s to public FTP: %s",
-                        job.id,
-                        ftp_err,
-                    )
+                public_url = public_url_for_image_path(image_path)
 
                 # Update job with success result
                 db_job.status = JobStatus.PROCESSED
@@ -116,21 +102,7 @@ def process_job(job: Job) -> None:
                     task_id=str(job.task_id),
                     job_id=str(job.id)
                 )
-                # Upload generated image to public FTP (best-effort)
-                public_url = None
-                try:
-                    public_url = uploadToPublic(image_path)
-                    logger.info(
-                        "Uploaded GPT-Image-1.5 image for job %s to public FTP: %s",
-                        job.id,
-                        public_url,
-                    )
-                except Exception as ftp_err:
-                    logger.error(
-                        "Failed to upload GPT-Image-1.5 image for job %s to public FTP: %s",
-                        job.id,
-                        ftp_err,
-                    )
+                public_url = public_url_for_image_path(image_path)
 
                 # Update job with success result
                 db_job.status = JobStatus.PROCESSED
@@ -157,21 +129,7 @@ def process_job(job: Job) -> None:
                     task_id=str(job.task_id),
                     job_id=str(job.id)
                 )
-                # Upload generated image to public FTP (best-effort)
-                public_url = None
-                try:
-                    public_url = uploadToPublic(image_path)
-                    logger.info(
-                        "Uploaded GPT-Image-2 image for job %s to public FTP: %s",
-                        job.id,
-                        public_url,
-                    )
-                except Exception as ftp_err:
-                    logger.error(
-                        "Failed to upload GPT-Image-2 image for job %s to public FTP: %s",
-                        job.id,
-                        ftp_err,
-                    )
+                public_url = public_url_for_image_path(image_path)
 
                 # Update job with success result
                 db_job.status = JobStatus.PROCESSED

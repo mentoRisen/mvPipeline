@@ -45,20 +45,37 @@ def _job_prompt_schema() -> dict[str, Any]:
     }
 
 
+# Matches ``app/services/jobs/processor.py`` routing (case-insensitive at runtime).
+_AI_DRAFT_JOB_GENERATORS = ("dalle", "gptimage15", "gptimage2")
+
+# Instagram publish path only uses jobs with this purpose (``publisher_instagram``).
+_AI_DRAFT_JOB_PURPOSE = ("imagecontent",)
+
+
 def _draft_job_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "generator": {"type": "string"},
-            "purpose": _nullable_string_schema(),
+            "generator": {
+                "type": "string",
+                "enum": list(_AI_DRAFT_JOB_GENERATORS),
+            },
+            "purpose": {
+                "type": "string",
+                "enum": list(_AI_DRAFT_JOB_PURPOSE),
+            },
             "prompt": _job_prompt_schema(),
             "order": {"type": "integer"},
         },
         # Strict mode: every key in ``properties`` must appear in ``required``.
-        # Use nullable types for optional job fields (e.g. purpose may be null).
         "required": ["generator", "purpose", "prompt", "order"],
         "additionalProperties": False,
     }
+
+
+# Slice 1–3: only ``instagram_post`` is registered; multi-image carousels use that
+# template plus multiple jobs with purpose ``imagecontent`` (see publisher_instagram).
+_AI_DRAFT_TEMPLATE_ENUM = ("instagram_post",)
 
 
 def _draft_task_schema() -> dict[str, Any]:
@@ -66,7 +83,10 @@ def _draft_task_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "name": {"type": "string"},
-            "template": {"type": "string"},
+            "template": {
+                "type": "string",
+                "enum": list(_AI_DRAFT_TEMPLATE_ENUM),
+            },
             "meta": _instagram_meta_schema(),
             "post": _instagram_post_schema(),
         },

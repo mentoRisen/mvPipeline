@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.services.integrations.ai_draft_llm_config import (
     resolve_openai_model,
+    resolve_preview_timeout_seconds,
     resolve_reasoning_effort,
 )
 
@@ -18,3 +19,10 @@ def test_resolve_reasoning_effort_none_omits():
 
 def test_resolve_reasoning_effort_maps_levels():
     assert resolve_reasoning_effort("medium") == "medium"
+
+
+def test_resolve_preview_timeout_scales_with_reasoning():
+    assert resolve_preview_timeout_seconds("none", base_seconds=120) == 120
+    assert resolve_preview_timeout_seconds("low", base_seconds=120) == 150
+    assert resolve_preview_timeout_seconds("medium", base_seconds=120) == 210
+    assert resolve_preview_timeout_seconds("high", base_seconds=120) == 300

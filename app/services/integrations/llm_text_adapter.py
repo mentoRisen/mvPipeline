@@ -16,6 +16,7 @@ from app.config import (
 )
 from app.services.integrations.ai_draft_llm_config import (
     resolve_openai_model,
+    resolve_preview_timeout_seconds,
     resolve_reasoning_effort,
 )
 from app.services.integrations.ai_draft_response_schema import draft_bundle_json_schema
@@ -115,6 +116,11 @@ class OpenAITextDraftAdapter:
         if reasoning_effort:
             payload["reasoning_effort"] = reasoning_effort
 
+        timeout_seconds = resolve_preview_timeout_seconds(
+            reasoning_token,
+            base_seconds=self.timeout_seconds,
+        )
+
         try:
             response = self.session.post(
                 self.api_url,
@@ -123,11 +129,19 @@ class OpenAITextDraftAdapter:
                     "Content-Type": "application/json",
                 },
                 json=payload,
-                timeout=self.timeout_seconds,
+                timeout=timeout_seconds,
             )
             response.raise_for_status()
         except requests.Timeout as exc:
-            raise TextDraftUpstreamError("AI draft preview timed out") from exc
+            effort = (reasoning_token or "none").strip().lower()
+            hint = (
+                " Try a lower reasoning level or increase AI_TASK_DRAFT_TIMEOUT_SECONDS."
+                if effort in ("medium", "high")
+                else ""
+            )
+            raise TextDraftUpstreamError(
+                f"AI draft preview timed out after {timeout_seconds}s.{hint}"
+            ) from exc
         except requests.HTTPError as exc:
             detail = _openai_error_detail(exc.response)
             message = "AI draft preview request failed"

@@ -187,8 +187,8 @@
           </div>
 
           <p class="ai-draft-help">
-            Saved prompts come from the Prompts page for this tenant. Model and reasoning apply on the
-            server in a later update; creation text is sent for preview today.
+            Saved prompts come from the Prompts page for this tenant. Higher reasoning can take several
+            minutes — keep the modal open while generating.
           </p>
         </div>
 

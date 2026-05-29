@@ -16,6 +16,7 @@ from app.models.task import Task
 from app.models.job import Job
 from app.models.tenant import Tenant
 from app.db.engine import engine
+from app.services.public_url import construct_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,51 @@ PUBLISH_INITIAL_DELAY = 5
 PUBLISH_MAX_RETRIES = 3
 PUBLISH_RETRY_DELAY = 5
 INSTAGRAM_ERROR_MEDIA_NOT_AVAILABLE = 9007
+IMAGE_URL_CHECK_TIMEOUT = 10
+
+
+def _is_url_reachable(url: str, timeout: float = IMAGE_URL_CHECK_TIMEOUT) -> bool:
+    """Return True when the URL responds with a successful HTTP status."""
+    try:
+        response = requests.head(url, timeout=timeout, allow_redirects=True)
+        if response.status_code == 405:
+            response = requests.get(url, timeout=timeout, stream=True)
+            response.close()
+        return response.ok
+    except requests.RequestException:
+        return False
+
+
+def resolve_image_url(
+    job_result: dict,
+    public_url_base: str | None,
+) -> str | None:
+    """Build PUBLIC_URL + image_path and verify Instagram can fetch it."""
+    image_path = job_result.get("image_path") or job_result.get("image_path_relative")
+    if not public_url_base or not image_path:
+        return None
+
+    url = construct_public_url(public_url_base, image_path)
+    if _is_url_reachable(url):
+        return url
+    return None
+
+
+def _instagram_api_error(response: requests.Response) -> str:
+    try:
+        body = response.json()
+        err = body.get("error", {})
+        msg = err.get("message") or err.get("error_user_msg") or str(body)
+        code = err.get("code")
+        subcode = err.get("error_subcode")
+        parts = [str(msg)]
+        if code is not None:
+            parts.append(f"code={code}")
+        if subcode is not None:
+            parts.append(f"subcode={subcode}")
+        return "; ".join(parts)
+    except (ValueError, TypeError):
+        return (response.text or "")[:500] or f"HTTP {response.status_code}"
 
 
 class _InstagramPublisherClient:
@@ -68,7 +114,11 @@ class _InstagramPublisherClient:
         }
 
         response = requests.post(url, params=params)
-        response.raise_for_status()
+        if not response.ok:
+            detail = _instagram_api_error(response)
+            raise ValueError(
+                f"Instagram media container failed ({response.status_code}): {detail}"
+            )
 
         result = response.json()
         if "id" not in result:
@@ -170,31 +220,35 @@ def publish_task_instagram(task: Task) -> dict:
             continue
         
         logger.debug(f"Job {job.id} result keys: {list(job.result.keys())}")
-        
-        # Try to get public_url first, then fall back to constructing from image_path
-        public_url = job.result.get("public_url")
-        if public_url:
-            image_urls.append(public_url)
-            logger.info(f"Job {job.id}: Using public_url: {public_url}")
+
+        public_url_base = tenant_env.get("PUBLIC_URL") or os.getenv("PUBLIC_URL")
+        resolved_url = resolve_image_url(job.result, public_url_base)
+        if resolved_url:
+            image_urls.append(resolved_url)
+            logger.info(f"Job {job.id}: Using reachable image URL: {resolved_url}")
         else:
-            logger.debug(f"Job {job.id}: No public_url found, trying to construct from image_path")
-            # Try to construct public URL from image_path using environment variable
+            stored = job.result.get("public_url")
             image_path = job.result.get("image_path") or job.result.get("image_path_relative")
-            logger.debug(f"Job {job.id}: image_path = {image_path}")
-            if image_path:
-                # Try tenant env first, then os environment
-                public_url_base = tenant_env.get("PUBLIC_URL") or os.getenv("PUBLIC_URL")
-                logger.debug(f"PUBLIC_URL from env: {public_url_base}")
-                if public_url_base:
-                    base = str(public_url_base).rstrip("/")
-                    path = str(image_path).lstrip("/")
-                    constructed_url = f"{base}/{path}"
-                    image_urls.append(constructed_url)
-                    logger.info(f"Job {job.id}: Constructed public URL: {constructed_url}")
-                else:
-                    logger.warning(f"PUBLIC_URL not configured, cannot construct URL for job {job.id}")
-            else:
+            if stored:
+                logger.warning(
+                    "Job %s public_url is not reachable by Instagram: %s",
+                    job.id,
+                    stored,
+                )
+            elif not image_path:
                 logger.warning(f"Job {job.id} has no image_path or public_url, skipping")
+            elif not public_url_base:
+                logger.warning(
+                    "PUBLIC_URL not configured, cannot construct URL for job %s",
+                    job.id,
+                )
+            else:
+                constructed = construct_public_url(public_url_base, image_path)
+                logger.warning(
+                    "Job %s image URL is not reachable: %s",
+                    job.id,
+                    constructed,
+                )
     
     if not image_urls:
         raise ValueError(f"Task {task.id} has no valid image URLs to publish")
