@@ -465,9 +465,7 @@ You would temporarily point Nginx `location /` at `root /var/www/flow.mentoverse
 
 - After pulls that change the SQLModel surface, run `python scripts/sync_schema.py` (see §12.0) so MySQL stays aligned; then restart API/worker if you have not already.
 - Override sensitive settings through `/opt/mvPipeline/.env` on the server.
-- Back up at minimum:
-  - MySQL database (daily dump)
-  - `/opt/mvPipeline/output/` (if these assets are required for publish/audit)
+- **Local backups:** daily cron runs `scripts/backup_local.sh` (see §15). Artifacts live under `/var/backups/mvpipeline/`; logs at `/var/log/mvpipeline-backup.log`.
 - If one worker cannot keep up with job volume, you can run additional worker processes (they compete on the same DB polling model) or split tenants using multiple units each with a different `WORKER_TENANT_ID`.
 - The Vite dev server is convenient for a dedicated dev VPS; do not use this exact pattern for a hard production environment where you want immutable artifacts and no dev tooling on the edge.
 
@@ -484,3 +482,99 @@ You would temporarily point Nginx `location /` at `root /var/www/flow.mentoverse
 - **API errors from the UI:** ensure `frontend/.env.development` has `VITE_API_URL=/api/v1` on the VPS; check Nginx `/api/` proxy block.
 - **502 on `/`:** Vite service down or not listening on `127.0.0.1:3000`
 - **502 on `/api/`:** API not bound to `127.0.0.1:8000`
+
+## 15) Local Backups
+
+Local-only backups protect against accidental deletes and bad edits on the VPS. They do **not** protect against full server or disk loss (off-site sync is future work).
+
+### What gets backed up
+
+Each daily run writes a dated folder under `/var/backups/mvpipeline/YYYY-MM-DD/` with four separate artifacts:
+
+| Artifact | Contents |
+|----------|----------|
+| `db.sql.gz` | Compressed MySQL dump of `mvpipeline` |
+| `output.tar.gz` | Generated files under `/opt/mvPipeline/output/` |
+| `.env` | Server secrets file (not in git) |
+| `workspace.tar.gz` | Application tree snapshot excluding `output/`, `venv/`, `frontend/node_modules/`, and `.git/` |
+
+Retention keeps the **7 most recent daily folders**; older folders are removed only after a fully successful run.
+
+The backup script passes `--no-tablespaces` to `mysqldump`. The `mvpipeline` MySQL user does not have global `PROCESS` privilege; without that flag MySQL 8 still completes the dump (exit code 0) but prints a tablespace error to stderr.
+
+### One-time setup
+
+As root (or with sudo), create paths owned by `deployer`:
+
+```bash
+sudo mkdir -p /var/backups/mvpipeline
+sudo touch /var/log/mvpipeline-backup.log
+sudo chown deployer:deployer /var/backups/mvpipeline /var/log/mvpipeline-backup.log
+chmod 700 /var/backups/mvpipeline
+```
+
+Ensure the script is executable:
+
+```bash
+chmod +x /opt/mvPipeline/scripts/backup_local.sh
+```
+
+### Manual test run
+
+```bash
+sudo -iu deployer
+/opt/mvPipeline/scripts/backup_local.sh
+ls -la /var/backups/mvpipeline/$(date +%Y-%m-%d)/
+tail -n 5 /var/log/mvpipeline-backup.log
+```
+
+Dry-run (prints planned actions without writing):
+
+```bash
+/opt/mvPipeline/scripts/backup_local.sh --dry-run
+```
+
+### Cron schedule
+
+Install for the `deployer` user (`crontab -e`):
+
+```cron
+0 3 * * * /opt/mvPipeline/scripts/backup_local.sh
+```
+
+The script appends timestamped success/failure lines to `/var/log/mvpipeline-backup.log`. No extra cron redirection is required.
+
+### Restore checklist
+
+**Database** (after bad migration, accidental delete, or corruption):
+
+1. Stop API and worker:  
+   `sudo systemctl stop mvpipeline-api.service mvpipeline-worker.service`
+2. Import the dump (adjust date folder as needed):  
+   `gunzip -c /var/backups/mvpipeline/YYYY-MM-DD/db.sql.gz | mysql -u mvpipeline -p mvpipeline`
+3. Optional schema check:  
+   `cd /opt/mvPipeline && source venv/bin/activate && python scripts/sync_schema.py --check-only`
+4. Restart services:  
+   `sudo systemctl start mvpipeline-api.service mvpipeline-worker.service`
+
+**Output** (recover generated/publish assets):
+
+1. Extract to a staging directory:  
+   `mkdir -p /tmp/mvp-restore && tar -xzf /var/backups/mvpipeline/YYYY-MM-DD/output.tar.gz -C /tmp/mvp-restore`
+2. Copy needed task folders back to `/opt/mvPipeline/output/` (do not blindly overwrite the whole tree).
+3. Verify files are reachable at `https://flow.mentoverse.eu/output/...` if publish depends on them.
+
+**Workspace** (recover uncommitted VPS edits):
+
+1. Extract to staging:  
+   `mkdir -p /tmp/mvp-workspace && tar -xzf /var/backups/mvpipeline/YYYY-MM-DD/workspace.tar.gz -C /tmp/mvp-workspace`
+2. Merge only the paths you need into `/opt/mvPipeline` (review diffs before overwriting live files).
+3. Restart API/worker if Python code changed.
+
+**`.env`** (secrets lost or corrupted only):
+
+1. Copy back:  
+   `cp /var/backups/mvpipeline/YYYY-MM-DD/.env /opt/mvPipeline/.env`
+2. Restrict permissions:  
+   `chmod 600 /opt/mvPipeline/.env`
+3. Restart API and worker so services reload environment values.
