@@ -9,7 +9,7 @@ import logging
 
 import requests
 
-from app.config import OPENAI_API_KEY, OUTPUT_DIR
+from app.config import GPT_IMAGE_TIMEOUT_SECONDS, OPENAI_API_KEY, OUTPUT_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,12 @@ def generate_image(prompt_text: str, task_id: str, job_id: str) -> str:
 
     api_url = "https://api.openai.com/v1/images/generations"
     try:
-        response = requests.post(api_url, headers=headers, json=payload, timeout=60)
+        response = requests.post(
+            api_url,
+            headers=headers,
+            json=payload,
+            timeout=GPT_IMAGE_TIMEOUT_SECONDS,
+        )
         response.raise_for_status()
 
         data = response.json()
