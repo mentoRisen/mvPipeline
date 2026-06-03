@@ -35,7 +35,7 @@ This document describes the runtime behavior that is actually wired in the curre
 - Sequence of layers/components:
   `frontend/src/views/TasksView.vue` embeds `TaskList.vue` and `TaskDetail.vue`.
   `TaskList.loadTasks()` -> `taskService.getTasks()` -> `GET /api/v1/tasks` in `app/api/routes.py` -> `task_repo.list_all_tasks()` or `list_tasks_by_status()`.
-  `TaskDetail.loadTask()` -> `taskService.getTask()` -> `GET /api/v1/tasks/{id}` -> `task_repo.get_task_by_id()` plus inline `Job` query in `app/api/routes.py`.
+  `TaskDetail.loadTask()` -> `taskService.getTask()` -> `GET /api/v1/tasks/{id}` -> `task_repo.get_task_by_id()` plus jobs loaded via `app/services/job_reference_service.list_jobs_for_task_ordered()` in `app/api/routes.py` (`order` desc, `reference_id` asc, `created_at` asc).
   Create flow: `TaskList.vue` -> `taskService.createTask()` -> `POST /api/v1/tasks` -> template hydration in `app/api/routes.py` -> `task_repo.save()`.
   AI create flow: `TaskList.vue` -> `AiTaskDraftModal.vue` -> `taskService.previewAiTaskDraft()` -> `POST /api/v1/tasks/ai-draft-preview` in `app/api/routes.py` starts an async preview (`preview_status=running`) via `app/services/ai_draft_session_repo.start_preview_run` and schedules `app/services/ai_draft_preview_runner.run_ai_draft_preview_job` (FastAPI `BackgroundTasks`; tests use `AI_DRAFT_PREVIEW_BLOCKING` for a synchronous finish). The runner calls `app/services/ai_task_draft_service.py` and `app/services/integrations/llm_text_adapter.py`, appends ordered rows to `ai_draft_communication_events`, then finalizes the bundle on `ai_draft_sessions`. Open draft count is capped per user/tenant; hitting the cap returns `409` and users must discard old drafts manually (no implicit trim/delete). The modal polls `GET .../ai-draft-sessions/{id}` until `succeeded` or `failed`, showing a technical transcript in the right column.
   Draft session CRUD: `AiTaskDraftModal.vue` -> `taskService.listAiDraftSessions/getAiDraftSession/patchAiDraftSession/deleteAiDraftSession` -> `GET/PATCH/DELETE /api/v1/tasks/ai-draft-sessions[...]` on `scoped_router`, scoped by authenticated user and `X-Tenant-Id`.
@@ -53,7 +53,7 @@ This document describes the runtime behavior that is actually wired in the curre
 
 - Trigger: user creates, edits, deletes, marks ready, processes, or retries a job from `frontend/src/components/TaskDetail.vue`.
 - Sequence of layers/components:
-  `TaskDetail.vue` -> `taskService.createJob/updateJob/deleteJob/processJob` in `frontend/src/services/api.js` -> job routes in `app/api/routes.py`.
+  `TaskDetail.vue` -> `taskService.createJob/updateJob/deleteJob/processJob` in `frontend/src/services/api.js` -> job routes in `app/api/routes.py`. Create accepts optional `reference_id` (≥1); assignment and uniqueness live in `app/services/job_reference_service.py` (`reference_id` is rejected on update). The jobs table shows `reference_id` in the **Ref** column (read-only).
   Job processing route `POST /api/v1/tasks/{task_id}/jobs/{job_id}/process` -> `app/services/jobs/processor.process_job()`.
 - Persistence touchpoints:
   jobs are created and updated in MySQL. Processing updates `Job.status`, `Job.result`, and may update parent `Task.status` to `PENDING_CONFIRMATION`.

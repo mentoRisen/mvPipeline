@@ -128,6 +128,7 @@
               <thead>
                 <tr>
                   <th>Order</th>
+                  <th>Ref</th>
                   <th>ID</th>
                   <th>Status</th>
                   <th>Generator</th>
@@ -143,6 +144,9 @@
                   <tr v-for="job in task.jobs" :key="job.id">
                     <td class="mono">
                       {{ job.order ?? 0 }}
+                    </td>
+                    <td class="mono">
+                      {{ job.reference_id ?? '—' }}
                     </td>
                     <td class="mono job-id-clickable" @click="copyJobId(job.id)" :title="`Click to copy full ID: ${job.id}`">
                       {{ job.id?.slice(0, 8) }}
@@ -236,7 +240,7 @@
                   </tr>
                 </template>
                 <tr v-else>
-                  <td class="jobs-empty" colspan="8">No jobs yet</td>
+                  <td class="jobs-empty" colspan="10">No jobs yet</td>
                 </tr>
               </tbody>
             </table>
@@ -601,11 +605,14 @@ export default {
           this.getJobImageUrl(job.result)
         )
       })
-      // Sort by order desc (highest first), then created_at, so display order matches backend
+      // Sort: order desc, reference_id asc, created_at asc (matches API / publish)
       return [...filtered].sort((a, b) => {
         const orderA = a.order ?? 0
         const orderB = b.order ?? 0
         if (orderB !== orderA) return orderB - orderA
+        const refA = a.reference_id ?? 0
+        const refB = b.reference_id ?? 0
+        if (refA !== refB) return refA - refB
         const createdA = a.created_at ? new Date(a.created_at).getTime() : 0
         const createdB = b.created_at ? new Date(b.created_at).getTime() : 0
         return createdA - createdB

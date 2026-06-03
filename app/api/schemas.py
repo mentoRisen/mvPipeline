@@ -78,6 +78,7 @@ class JobResponse(BaseModel):
     task_id: UUID
     status: JobStatus
     order: int
+    reference_id: int
     generator: str
     purpose: Optional[str] = None
     prompt: Optional[dict] = None
@@ -95,6 +96,11 @@ class JobCreate(BaseModel):
     purpose: Optional[str] = Field(None, description="Purpose/reason for how the job result should be used")
     prompt: Optional[dict] = Field(None, description="JSON with all data needed to run the prompt")
     order: Optional[int] = Field(0, description="Rendering order for this job (ascending)")
+    reference_id: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Optional per-task slot id (create-only); auto-assigned when omitted",
+    )
 
 
 class JobUpdate(BaseModel):
@@ -105,6 +111,13 @@ class JobUpdate(BaseModel):
     status: Optional[JobStatus] = Field(None, description="Job status")
     result: Optional[dict] = Field(None, description="JSON with the job result (e.g., image paths, errors)")
     order: Optional[int] = Field(None, description="Rendering order for this job (ascending)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_reference_id_updates(cls, data: object) -> object:
+        if isinstance(data, dict) and "reference_id" in data:
+            raise ValueError("reference_id cannot be changed after create")
+        return data
 
 
 class TaskResponse(BaseModel):
@@ -241,6 +254,11 @@ class AiDraftJob(BaseModel):
     purpose: Optional[str] = Field(default=None, max_length=255)
     prompt: dict = Field(default_factory=dict)
     order: int = Field(default=0, ge=0)
+    reference_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Optional per-task slot id (create-only); auto-assigned when omitted",
+    )
 
 
 class AiTaskDraftItem(BaseModel):

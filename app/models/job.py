@@ -48,6 +48,11 @@ class Job(SQLModel, table=True):
         default=0,
         description="Controls display order of jobs (ascending)"
     )
+
+    # Stable per-task slot identity (1, 2, 3…); unique within task
+    reference_id: int = Field(
+        description="Per-task slot identifier for tie-breaking and future job references"
+    )
     
     # Status tracking
     status: JobStatus = Field(

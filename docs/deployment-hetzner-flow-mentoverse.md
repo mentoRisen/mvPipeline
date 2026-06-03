@@ -423,6 +423,16 @@ python scripts/sync_schema.py
 
 Use `python scripts/sync_schema.py --check-only` if you only want verification without DDL: it asserts tables/columns listed in `scripts/sync_schema.py` (AI draft artifacts and `prompts`) exist. Omit `--check-only` to run `SQLModel.metadata.create_all` first (additive), then the same checks. The script does not replace full migration tooling for destructive changes.
 
+**`jobs.reference_id` rollout** (when deploying that feature): take a DB backup first, then:
+
+```bash
+python scripts/sync_schema.py          # adds nullable jobs.reference_id if missing
+python scripts/backfill_job_reference_ids.py   # 1..N per task, NOT NULL + unique index
+sudo systemctl restart mvpipeline-api.service
+```
+
+The worker does not need a restart for this column alone. JSON import remains non-atomic (partial failure can leave a task with some jobs created).
+
 ```bash
 ssh deployer@flow.mentoverse.eu <<'EOF'
 set -euo pipefail

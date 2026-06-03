@@ -20,6 +20,7 @@ def _create_task_and_job(*, db_session: Session, generator: str) -> Job:
 
     job = Job(
         task_id=task.id,
+        reference_id=1,
         status=JobStatus.READY,
         generator=generator,
         purpose="imagecontent",
