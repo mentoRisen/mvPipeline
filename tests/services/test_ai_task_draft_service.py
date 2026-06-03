@@ -257,6 +257,80 @@ def test_generate_preview_bubbles_up_upstream_errors(tenant):
         )
 
 
+def test_confirm_bundle_assigns_sequential_reference_ids(tenant, db_session):
+    service = AiTaskDraftService(StubAdapter({}))
+    draft = AiTaskDraftBundleConfirmRequest.model_validate(
+        {
+            "items": [
+                {
+                    "task": {
+                        "name": "Multi-job task",
+                        "template": "instagram_post",
+                        "meta": {},
+                        "post": {},
+                    },
+                    "jobs": [
+                        {
+                            "generator": "dalle",
+                            "purpose": "imagecontent",
+                            "prompt": {"prompt": "a"},
+                            "order": 2,
+                        },
+                        {
+                            "generator": "dalle",
+                            "purpose": "imagecontent",
+                            "prompt": {"prompt": "b"},
+                            "order": 0,
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    service.confirm_bundle(draft=draft, tenant=tenant)
+
+    stored_jobs = db_session.exec(select(Job)).all()
+    assert len(stored_jobs) == 2
+    refs = sorted(j.reference_id for j in stored_jobs)
+    assert refs == [1, 2]
+
+
+def test_confirm_bundle_rejects_duplicate_explicit_reference_ids(tenant):
+    service = AiTaskDraftService(StubAdapter({}))
+    draft = AiTaskDraftBundleConfirmRequest.model_validate(
+        {
+            "items": [
+                {
+                    "task": {
+                        "name": "Dup refs",
+                        "template": "instagram_post",
+                        "meta": {},
+                        "post": {},
+                    },
+                    "jobs": [
+                        {
+                            "generator": "dalle",
+                            "purpose": "imagecontent",
+                            "prompt": {"prompt": "a"},
+                            "reference_id": 1,
+                        },
+                        {
+                            "generator": "dalle",
+                            "purpose": "imagecontent",
+                            "prompt": {"prompt": "b"},
+                            "reference_id": 1,
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(AiTaskDraftItemValidationError, match="duplicate"):
+        service.confirm_bundle(draft=draft, tenant=tenant)
+
+
 def test_confirm_bundle_persists_tasks_and_jobs_atomically(tenant, db_session):
     service = AiTaskDraftService(StubAdapter({}))
     draft = AiTaskDraftBundleConfirmRequest.model_validate(
@@ -280,11 +354,18 @@ def test_confirm_bundle_rolls_back_when_writer_fails(tenant, test_engine, db_ses
         {"items": [_single_payload(), _single_payload()]}
     )
 
-    def failing_writer(bundles: list[tuple[Task, list[Job]]]) -> list[Task]:
+    def failing_writer(
+        bundles: list[tuple[Task, list[Job]]],
+        **kwargs,
+    ) -> list[Task]:
         with Session(test_engine) as session:
             for task, jobs in bundles:
                 session.add(task)
+                session.flush()
                 for job in jobs:
+                    job.task_id = task.id
+                    if not job.reference_id:
+                        job.reference_id = 1
                     session.add(job)
                 session.flush()
             raise RuntimeError("boom")

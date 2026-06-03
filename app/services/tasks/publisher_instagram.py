@@ -10,13 +10,14 @@ import os
 import time
 
 import requests
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.models.task import Task
 from app.models.job import Job
 from app.models.tenant import Tenant
 from app.db.engine import engine
 from app.services.public_url import construct_public_url
+from app.services.job_reference_service import list_jobs_for_task_ordered
 
 logger = logging.getLogger(__name__)
 
@@ -198,13 +199,10 @@ def publish_task_instagram(task: Task) -> dict:
     # Tenant-specific env (e.g. INSTAGRAM_ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID, PUBLIC_URL)
     tenant_env = _get_tenant_env(task)
     
-    # Load jobs for this task ordered by custom order (descending), then by creation time (oldest first)
     with Session(engine) as session:
-        statement = select(Job).where(
-            Job.task_id == task.id,
-            Job.purpose == "imagecontent"
-        ).order_by(Job.order.desc(), Job.created_at.asc())
-        jobs = list(session.exec(statement).all())
+        jobs = list_jobs_for_task_ordered(
+            session, task.id, purpose="imagecontent"
+        )
     
     if not jobs:
         raise ValueError(f"Task {task.id} has no imagecontent jobs to publish")

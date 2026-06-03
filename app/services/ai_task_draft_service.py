@@ -17,6 +17,7 @@ from app.models.job import Job, JobStatus
 from app.models.tenant import Tenant
 from app.models.task import Task
 import app.services.task_repo as task_repo
+from app.services.job_reference_service import JobReferenceValidationError
 from app.services.integrations.llm_text_adapter import (
     TextDraftRefusalError,
     TextDraftUpstreamError,
@@ -162,6 +163,7 @@ class AiTaskDraftService:
                 ) from exc
 
         bundles: list[tuple[Task, list[Job]]] = []
+        explicit_per_bundle: list[list[int | None]] = []
         for preview in normalized:
             task = Task(
                 tenant_id=tenant.id,
@@ -178,12 +180,25 @@ class AiTaskDraftService:
                     prompt=job.prompt,
                     order=job.order,
                     status=JobStatus.NEW,
+                    reference_id=0,
                 )
                 for job in preview.jobs
             ]
             bundles.append((task, jobs))
+            explicit_per_bundle.append(
+                [draft_job.reference_id for draft_job in preview.jobs]
+            )
 
-        return self.bundle_writer(bundles)
+        try:
+            return self.bundle_writer(
+                bundles,
+                explicit_reference_ids_per_bundle=explicit_per_bundle,
+            )
+        except JobReferenceValidationError as exc:
+            raise AiTaskDraftItemValidationError(
+                str(exc),
+                field=exc.field,
+            ) from exc
 
     def _coerce_raw_bundle(self, raw: dict[str, Any]) -> dict[str, Any]:
         """Accept either ``{\"items\": [...]}`` or legacy single-task JSON."""

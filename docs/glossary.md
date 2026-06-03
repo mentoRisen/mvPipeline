@@ -8,7 +8,9 @@ This glossary defines terms as they are used in this repository today. It is gro
 |---|---|---|
 | `Mentoverse Pipeline` | The product name for this app: a multi-tenant system for generating image content and publishing it to Instagram. | Grounded in `README.md`. |
 | `task` | The main unit of work at the product level: one Instagram-post workflow with status, tenant, metadata, post content, and publish result. | Not the same thing as a background queue task. |
-| `job` | A child unit under a task that performs AI/image generation work. Jobs have their own status, generator, prompt, result, and display order. | Easy to confuse with generic “background job”; here it is a DB entity. |
+| `job` | A child unit under a task that performs AI/image generation work. Jobs have their own status, generator, prompt, result, display `order`, and per-task `reference_id` slot. | Easy to confuse with generic “background job”; here it is a DB entity. |
+| `reference_id` | A create-only, per-task integer slot (1, 2, 3…) on `Job`, unique within the task. Used to tie-break equal `order` values in API lists and Instagram publish ordering; not used by the worker pick order. | Distinct from display `order` and from the job UUID primary key. |
+| `order` (job) | Display/rendering sequence for jobs under a task (UI reordering). List APIs sort by `order` descending, then `reference_id` ascending, then `created_at` ascending. | Many jobs default to `order=0`; `reference_id` resolves ties. |
 | `tenant` | A project/account boundary that owns tasks and schedule rules. It also carries tenant-specific configuration in `env`. | README also calls this a “project”. |
 | `project` | A user-facing synonym for `tenant`. README says the app manages projects (tenants). | Ambiguous because the code consistently uses `tenant`, not `project`, as the canonical model name. |
 | `template` | A task type identifier that determines the default `meta` and `post` JSON structure and affects publish behavior. | Currently only `instagram_post` is wired. |

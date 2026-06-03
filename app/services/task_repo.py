@@ -7,6 +7,11 @@ from sqlmodel import Session, select
 from app.models.task import Task, TaskStatus
 from app.models.job import Job, JobStatus
 from app.db.engine import engine
+from app.services.job_reference_service import (
+    JobReferenceValidationError,
+    assign_reference_ids_for_new_jobs,
+    resolve_reference_id,
+)
 
 
 def create_task(tenant_id: Optional[UUID] = None) -> Task:
@@ -145,13 +150,23 @@ def save(task: Task) -> Task:
     return task
 
 
-def create_task_with_jobs(task: Task, jobs: list[Job]) -> Task:
+def create_task_with_jobs(
+    task: Task,
+    jobs: list[Job],
+    *,
+    explicit_reference_ids: list[int | None] | None = None,
+) -> Task:
     """Persist one task and its jobs in a single transaction."""
+    explicit_reference_ids = explicit_reference_ids or [None] * len(jobs)
     with Session(engine) as session:
         session.add(task)
         session.flush()
-        for job in jobs:
+        assigned = assign_reference_ids_for_new_jobs(
+            session, task.id, explicit_reference_ids
+        )
+        for job, reference_id in zip(jobs, assigned, strict=True):
             job.task_id = task.id
+            job.reference_id = reference_id
             session.add(job)
         session.commit()
         session.refresh(task)
@@ -160,17 +175,32 @@ def create_task_with_jobs(task: Task, jobs: list[Job]) -> Task:
 
 def create_task_bundle_with_jobs(
     bundles: list[tuple[Task, list[Job]]],
+    *,
+    explicit_reference_ids_per_bundle: list[list[int | None]] | None = None,
 ) -> list[Task]:
     """Persist many tasks and their jobs in a single transaction (all or nothing)."""
     if not bundles:
         return []
+    if explicit_reference_ids_per_bundle is None:
+        explicit_reference_ids_per_bundle = [
+            [None] * len(jobs) for _, jobs in bundles
+        ]
     created: list[Task] = []
     with Session(engine) as session:
-        for task, jobs in bundles:
+        for (task, jobs), explicit_ids in zip(
+            bundles, explicit_reference_ids_per_bundle, strict=True
+        ):
             session.add(task)
             session.flush()
-            for job in jobs:
+            try:
+                assigned = assign_reference_ids_for_new_jobs(
+                    session, task.id, explicit_ids
+                )
+            except JobReferenceValidationError:
+                raise
+            for job, reference_id in zip(jobs, assigned, strict=True):
                 job.task_id = task.id
+                job.reference_id = reference_id
                 session.add(job)
             created.append(task)
         session.commit()

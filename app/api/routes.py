@@ -69,6 +69,12 @@ from app.services.integrations.llm_text_adapter import OpenAITextDraftAdapter
 from app.template.base import Template
 from app.template.instagram_post import InstagramPost
 from app.services.jobs.processor import process_job as process_job_service
+from app.services.job_reference_service import (
+    JobReferenceValidationError,
+    integrity_error_to_validation,
+    list_jobs_for_task_ordered,
+    resolve_reference_id,
+)
 from app.services import auth as auth_service
 from app.api.tenant_deps import tenant_context_dependency
 from app.context import get_tenant as current_tenant
@@ -954,14 +960,8 @@ def get_task(
     """
     task = _task_for_current_tenant_or_404(task_id, tenant)
     
-    # Load jobs for this task ordered by custom order (descending), then by creation time (oldest first)
     with Session(engine) as session:
-        statement = (
-            select(Job)
-            .where(Job.task_id == task_id)
-            .order_by(Job.order.desc(), Job.created_at.asc())
-        )
-        jobs = list(session.exec(statement).all())
+        jobs = list_jobs_for_task_ordered(session, task_id)
     
     # Create task response with jobs
     task_dict = TaskResponse.model_validate(task).model_dump()
@@ -1393,33 +1393,70 @@ def create_job(
     logger.info(f"[create_job] Task {task_id} found, creating job")
     
     try:
-        # Create job
-        job = Job()
-        job.task_id = task_id
-        job.generator = job_data.generator
-        job.purpose = job_data.purpose
-        job.prompt = job_data.prompt
-        # Use explicit order if provided, otherwise default to 0
-        if job_data.order is not None:
-            job.order = job_data.order
-        job.status = JobStatus.NEW
-        
-        logger.debug(f"[create_job] Job object created: generator={job.generator}, purpose={job.purpose}, status={job.status}")
-        if job.prompt:
-            logger.debug(f"[create_job] Job prompt structure: {type(job.prompt)}, keys={job.prompt.keys() if isinstance(job.prompt, dict) else 'N/A'}")
-            if isinstance(job.prompt, dict) and 'prompt' in job.prompt:
-                logger.debug(f"[create_job] Job prompt.prompt value: {job.prompt.get('prompt', 'N/A')[:100]}...")
-        
-        # Save job
         with Session(engine) as session:
+            try:
+                reference_id = resolve_reference_id(
+                    session, task_id, job_data.reference_id
+                )
+            except JobReferenceValidationError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=[
+                        {
+                            "loc": ["body", exc.field],
+                            "msg": str(exc),
+                            "type": "value_error",
+                        }
+                    ],
+                ) from exc
+
+            job = Job()
+            job.task_id = task_id
+            job.reference_id = reference_id
+            job.generator = job_data.generator
+            job.purpose = job_data.purpose
+            job.prompt = job_data.prompt
+            if job_data.order is not None:
+                job.order = job_data.order
+            job.status = JobStatus.NEW
+
+            logger.debug(
+                "[create_job] Job object created: generator=%s purpose=%s status=%s",
+                job.generator,
+                job.purpose,
+                job.status,
+            )
+
             session.add(job)
             session.commit()
             session.refresh(job)
-        
-        logger.info(f"[create_job] Job created successfully: job_id={job.id}, task_id={task_id}, generator={job.generator}")
+
+        logger.info(
+            "[create_job] Job created successfully: job_id=%s task_id=%s",
+            job.id,
+            task_id,
+        )
         return JobResponse.model_validate(job)
+    except HTTPException:
+        raise
     except IntegrityError as e:
-        logger.error(f"[create_job] Database integrity error for task {task_id}: {str(e)}")
+        mapped = integrity_error_to_validation(e)
+        if mapped is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=[
+                    {
+                        "loc": ["body", mapped.field],
+                        "msg": str(mapped),
+                        "type": "value_error",
+                    }
+                ],
+            ) from e
+        logger.error(
+            "[create_job] Database integrity error for task %s: %s",
+            task_id,
+            str(e),
+        )
         raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
     except SQLAlchemyError as e:
         logger.error(f"[create_job] Database error for task {task_id}: {str(e)}")

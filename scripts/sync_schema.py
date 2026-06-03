@@ -69,6 +69,9 @@ REQUIRED_TABLE_COLUMNS = {
 }
 
 ADD_COLUMN_DDL = {
+    "jobs": {
+        "reference_id": "ALTER TABLE jobs ADD COLUMN reference_id INT NULL",
+    },
     "ai_draft_sessions": {
         # Existing deployments created this table before async preview lifecycle existed.
         "preview_status": "ALTER TABLE ai_draft_sessions ADD COLUMN preview_status VARCHAR(32) NOT NULL DEFAULT 'succeeded'",
