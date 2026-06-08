@@ -18,6 +18,11 @@ from app.models.tenant import Tenant
 from app.models.task import Task
 import app.services.task_repo as task_repo
 from app.services.job_reference_service import JobReferenceValidationError
+from app.services.job_prompt_validation import (
+    JobPromptValidationError,
+    validate_draft_job_reference_ids,
+    validate_job_prompt_for_write,
+)
 from app.services.integrations.llm_text_adapter import (
     TextDraftRefusalError,
     TextDraftUpstreamError,
@@ -261,6 +266,35 @@ class AiTaskDraftService:
                 field="jobs",
             )
 
+        try:
+            validate_draft_job_reference_ids(preview.jobs)
+        except JobPromptValidationError as exc:
+            raise AiTaskDraftItemValidationError(
+                str(exc),
+                field=exc.field,
+            ) from exc
+
+        normalized_jobs = []
+        for job_index, job in enumerate(preview.jobs):
+            try:
+                validated_prompt = validate_job_prompt_for_write(
+                    None,
+                    None,
+                    generator=job.generator,
+                    purpose=job.purpose,
+                    prompt=job.prompt,
+                    draft_jobs=preview.jobs,
+                )
+            except JobPromptValidationError as exc:
+                raise AiTaskDraftItemValidationError(
+                    str(exc),
+                    field=f"jobs[{job_index}].{exc.field}",
+                ) from exc
+            if validated_prompt is not None and validated_prompt != job.prompt:
+                normalized_jobs.append(job.model_copy(update={"prompt": validated_prompt}))
+            else:
+                normalized_jobs.append(job)
+
         template = InstagramPost()
         merged_meta = template.getEmptyMeta()
         merged_meta.update(preview.task.meta)
@@ -276,7 +310,7 @@ class AiTaskDraftService:
                         "post": merged_post,
                     }
                 ),
-                "jobs": sorted(preview.jobs, key=lambda job: job.order),
+                "jobs": sorted(normalized_jobs, key=lambda job: job.order),
             }
         )
 

@@ -460,21 +460,59 @@
                     />
                   </div>
                   <div class="form-group">
-                    <label>Generator</label>
-                    <select v-model="job.generator" :disabled="confirming">
-                      <option value="dalle">dalle</option>
-                      <option value="gptimage15">gptimage15</option>
-                      <option value="gptimage2">gptimage2</option>
+                    <label>Purpose</label>
+                    <select
+                      v-model="job.purpose"
+                      :disabled="confirming"
+                      @change="onDraftJobPurposeChange(taskIndex, index)"
+                    >
+                      <option
+                        v-for="purpose in jobPurposes"
+                        :key="purpose"
+                        :value="purpose"
+                      >
+                        {{ purpose }}
+                      </option>
                     </select>
                   </div>
                   <div class="form-group">
-                    <label>Purpose</label>
-                    <input
-                      v-model="job.purpose"
-                      type="text"
+                    <label>Generator</label>
+                    <select v-model="job.generator" :disabled="confirming">
+                      <option
+                        v-for="gen in generatorsForDraftJob(job)"
+                        :key="gen"
+                        :value="gen"
+                      >
+                        {{ gen }}
+                      </option>
+                    </select>
+                  </div>
+                  <div v-if="isRunwayDraftJob(job)" class="form-group">
+                    <label>Model</label>
+                    <select v-model="job.prompt.model" :disabled="confirming">
+                      <option
+                        v-for="model in runwayVideoModels"
+                        :key="model"
+                        :value="model"
+                      >
+                        {{ model }}
+                      </option>
+                    </select>
+                  </div>
+                  <div v-if="isRunwayDraftJob(job)" class="form-group">
+                    <label>Image slot</label>
+                    <select
+                      v-model.number="job.prompt.reference_id"
                       :disabled="confirming"
-                      placeholder="imagecontent"
-                    />
+                    >
+                      <option
+                        v-for="slot in imageSlotsForDraftItem(item)"
+                        :key="slot.value"
+                        :value="slot.value"
+                      >
+                        {{ slot.label }}
+                      </option>
+                    </select>
                   </div>
                 </div>
 
@@ -484,7 +522,11 @@
                     v-model="job.prompt.prompt"
                     rows="5"
                     :disabled="confirming"
-                    placeholder="Enter the image prompt"
+                    :placeholder="
+                      isRunwayDraftJob(job)
+                        ? 'Motion prompt for Runway'
+                        : 'Enter the image prompt'
+                    "
                   ></textarea>
                 </div>
               </div>
@@ -541,17 +583,15 @@ import {
   parseDraftLimit,
   resumeSessionLabel,
 } from './aiDraftPromptConfig.js'
-
-function emptyDraftJob() {
-  return {
-    generator: 'dalle',
-    purpose: 'imagecontent',
-    prompt: {
-      prompt: '',
-    },
-    order: 0,
-  }
-}
+import {
+  JOB_PURPOSES,
+  RUNWAY_VIDEO_MODELS,
+  draftJobPromptValid,
+  emptyDraftJob,
+  generatorsForPurpose,
+  imageSlotOptions,
+  isRunwayGenerator,
+} from './jobGeneratorConfig.js'
 
 function cloneBundle(bundle) {
   return JSON.parse(JSON.stringify(bundle))
@@ -674,15 +714,18 @@ export default {
       if (!this.bundle?.items?.length) return false
       return this.bundle.items.every((_, i) => this.expandedTasks[i])
     },
+    jobPurposes() {
+      return JOB_PURPOSES
+    },
+    runwayVideoModels() {
+      return RUNWAY_VIDEO_MODELS
+    },
     canConfirm() {
       if (!this.bundle?.items?.length) return false
       return this.bundle.items.every((item) => {
         if (!item.task?.name?.trim()) return false
         if (!Array.isArray(item.jobs) || item.jobs.length === 0) return false
-        return item.jobs.every((job) => {
-          const promptText = job?.prompt?.prompt
-          return Boolean(job.generator && typeof promptText === 'string' && promptText.trim())
-        })
+        return item.jobs.every((job) => draftJobPromptValid(job, item.jobs))
       })
     },
     confirmButtonLabel() {
@@ -1091,15 +1134,25 @@ export default {
       if (item.task.post.caption === undefined || item.task.post.caption === null) {
         item.task.post.caption = ''
       }
-      item.jobs = (item.jobs || []).map((job, j) => ({
-        ...emptyDraftJob(),
-        ...job,
-        order: job.order ?? j,
-        prompt: {
-          ...(job && typeof job.prompt === 'object' ? job.prompt : {}),
-          prompt: job?.prompt?.prompt || '',
-        },
-      }))
+      item.jobs = (item.jobs || []).reduce((normalizedJobs, job, j) => {
+        const purpose = job?.purpose || 'imagecontent'
+        const base = emptyDraftJob(purpose, normalizedJobs)
+        const referenceId =
+          typeof job?.reference_id === 'number' && job.reference_id >= 1
+            ? job.reference_id
+            : base.reference_id
+        normalizedJobs.push({
+          ...base,
+          ...job,
+          reference_id: referenceId,
+          order: job.order ?? j,
+          prompt: {
+            ...(job && typeof job.prompt === 'object' ? job.prompt : {}),
+            prompt: job?.prompt?.prompt || '',
+          },
+        })
+        return normalizedJobs
+      }, [])
       item.warnings = item.warnings || []
       return item
     },
@@ -1235,11 +1288,30 @@ export default {
         }
       }
     },
+    isRunwayDraftJob(job) {
+      return isRunwayGenerator(job?.generator)
+    },
+    generatorsForDraftJob(job) {
+      return generatorsForPurpose(job?.purpose || 'imagecontent')
+    },
+    imageSlotsForDraftItem(item) {
+      return imageSlotOptions(item?.jobs || [])
+    },
+    onDraftJobPurposeChange(taskIndex, jobIndex) {
+      const item = this.bundle?.items?.[taskIndex]
+      const job = item?.jobs?.[jobIndex]
+      if (!job) return
+      const siblings = (item.jobs || []).filter((_, index) => index !== jobIndex)
+      const fresh = emptyDraftJob(job.purpose, siblings)
+      job.generator = fresh.generator
+      job.reference_id = job.reference_id ?? fresh.reference_id
+      job.prompt = { ...fresh.prompt }
+    },
     addJob(taskIndex) {
       if (!this.bundle?.items?.[taskIndex] || this.confirming) return
       const item = this.bundle.items[taskIndex]
       item.jobs.push({
-        ...emptyDraftJob(),
+        ...emptyDraftJob('imagecontent', item.jobs),
         order: item.jobs.length,
       })
     },

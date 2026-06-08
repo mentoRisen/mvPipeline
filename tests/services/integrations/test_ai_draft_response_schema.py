@@ -106,27 +106,70 @@ def test_draft_bundle_schema_pins_template_to_instagram_post() -> None:
     }
 
 
-def test_draft_bundle_schema_pins_job_generators() -> None:
-    fmt = draft_bundle_json_schema(max_items=1, max_jobs=1)
-    job = (
+def _draft_job_one_of(fmt: dict) -> list[dict]:
+    job_items = (
         fmt["json_schema"]["schema"]["properties"]["items"]["items"]["properties"]["jobs"][
             "items"
         ]
     )
-    assert job["properties"]["generator"] == {
+    return job_items["oneOf"]
+
+
+def test_draft_bundle_schema_pins_job_generators() -> None:
+    fmt = draft_bundle_json_schema(max_items=1, max_jobs=1)
+    branches = _draft_job_one_of(fmt)
+    image_branch = next(b for b in branches if "dalle" in b["properties"]["generator"]["enum"])
+    runway_branch = next(
+        b for b in branches if b["properties"]["generator"]["enum"] == ["runway-video"]
+    )
+    assert image_branch["properties"]["generator"] == {
         "type": "string",
         "enum": ["dalle", "gptimage15", "gptimage2"],
     }
+    assert runway_branch["properties"]["generator"] == {
+        "type": "string",
+        "enum": ["runway-video"],
+    }
 
 
-def test_draft_bundle_schema_pins_job_purpose_to_imagecontent() -> None:
+def test_draft_bundle_schema_pins_job_purpose() -> None:
     fmt = draft_bundle_json_schema(max_items=1, max_jobs=1)
-    job = (
-        fmt["json_schema"]["schema"]["properties"]["items"]["items"]["properties"]["jobs"][
-            "items"
-        ]
+    branches = _draft_job_one_of(fmt)
+    image_branch = next(b for b in branches if "imagecontent" in b["properties"]["purpose"]["enum"])
+    runway_branch = next(
+        b for b in branches if b["properties"]["purpose"]["enum"] == ["videocontent"]
     )
-    assert job["properties"]["purpose"] == {
+    assert image_branch["properties"]["purpose"] == {
         "type": "string",
         "enum": ["imagecontent"],
     }
+    assert runway_branch["properties"]["purpose"] == {
+        "type": "string",
+        "enum": ["videocontent"],
+    }
+
+
+def test_draft_bundle_schema_requires_job_reference_id() -> None:
+    fmt = draft_bundle_json_schema(max_items=1, max_jobs=1)
+    for branch in _draft_job_one_of(fmt):
+        assert "reference_id" in branch["properties"]
+        assert "reference_id" in branch["required"]
+        assert branch["properties"]["reference_id"] == {
+            "type": "integer",
+            "minimum": 1,
+        }
+
+
+def test_draft_bundle_schema_runway_prompt_requires_all_keys() -> None:
+    fmt = draft_bundle_json_schema(max_items=1, max_jobs=1)
+    runway_branch = next(
+        b
+        for b in _draft_job_one_of(fmt)
+        if b["properties"]["generator"]["enum"] == ["runway-video"]
+    )
+    prompt_schema = runway_branch["properties"]["prompt"]
+    assert set(prompt_schema["required"]) == {"prompt", "model", "reference_id"}
+    assert prompt_schema["properties"]["model"]["enum"] == [
+        "gen4_turbo",
+        "veo3.1_fast",
+    ]

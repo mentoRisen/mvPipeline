@@ -75,6 +75,10 @@ from app.services.job_reference_service import (
     list_jobs_for_task_ordered,
     resolve_reference_id,
 )
+from app.services.job_prompt_validation import (
+    JobPromptValidationError,
+    validate_job_prompt_for_write,
+)
 from app.services import auth as auth_service
 from app.api.tenant_deps import tenant_context_dependency
 from app.context import get_tenant as current_tenant
@@ -1410,12 +1414,32 @@ def create_job(
                     ],
                 ) from exc
 
+            try:
+                validated_prompt = validate_job_prompt_for_write(
+                    session,
+                    task_id,
+                    generator=job_data.generator,
+                    purpose=job_data.purpose,
+                    prompt=job_data.prompt,
+                )
+            except JobPromptValidationError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=[
+                        {
+                            "loc": ["body", exc.field],
+                            "msg": str(exc),
+                            "type": "value_error",
+                        }
+                    ],
+                ) from exc
+
             job = Job()
             job.task_id = task_id
             job.reference_id = reference_id
             job.generator = job_data.generator
             job.purpose = job_data.purpose
-            job.prompt = job_data.prompt
+            job.prompt = validated_prompt
             if job_data.order is not None:
                 job.order = job_data.order
             job.status = JobStatus.NEW
@@ -1496,14 +1520,50 @@ def update_job(
             
             if not job:
                 raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+            effective_generator = (
+                job_data.generator if job_data.generator is not None else job.generator
+            )
+            effective_purpose = (
+                job_data.purpose if job_data.purpose is not None else job.purpose
+            )
+            effective_prompt = (
+                job_data.prompt if job_data.prompt is not None else job.prompt
+            )
+            if (
+                job_data.generator is not None
+                or job_data.purpose is not None
+                or job_data.prompt is not None
+            ):
+                try:
+                    effective_prompt = validate_job_prompt_for_write(
+                        session,
+                        task_id,
+                        generator=effective_generator,
+                        purpose=effective_purpose,
+                        prompt=effective_prompt,
+                    )
+                except JobPromptValidationError as exc:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=[
+                            {
+                                "loc": ["body", exc.field],
+                                "msg": str(exc),
+                                "type": "value_error",
+                            }
+                        ],
+                    ) from exc
             
             # Update job fields if provided
             if job_data.generator is not None:
                 job.generator = job_data.generator
             if job_data.purpose is not None:
                 job.purpose = job_data.purpose
-            if job_data.prompt is not None:
-                job.prompt = job_data.prompt
+            if job_data.prompt is not None or (
+                job_data.generator is not None or job_data.purpose is not None
+            ):
+                job.prompt = effective_prompt
             if job_data.status is not None:
                 job.status = job_data.status
             if job_data.order is not None:
