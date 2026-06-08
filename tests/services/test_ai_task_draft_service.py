@@ -29,6 +29,7 @@ def _single_payload() -> dict:
                 "purpose": "imagecontent",
                 "prompt": {"prompt": "flowers and clean brand layout"},
                 "order": 1,
+                "reference_id": 1,
             }
         ],
     }
@@ -106,6 +107,7 @@ def test_generate_preview_accepts_items_array(tenant, db_session):
                             "purpose": "imagecontent",
                             "prompt": {"prompt": "summer vibe"},
                             "order": 0,
+                            "reference_id": 1,
                         }
                     ],
                 },
@@ -145,6 +147,7 @@ def test_generate_preview_rejects_too_many_jobs_per_task(tenant):
             "purpose": "imagecontent",
             "prompt": {"prompt": f"Prompt {i}"},
             "order": i,
+            "reference_id": i + 1,
         }
         for i in range(5)
     ]
@@ -190,6 +193,7 @@ def test_generate_preview_allows_missing_optional_tenant_fields(tenant):
                     "purpose": "imagecontent",
                     "prompt": {"prompt": "minimal brand card"},
                     "order": 0,
+                    "reference_id": 1,
                 }
             ],
         }
@@ -221,6 +225,7 @@ def test_generate_preview_rejects_non_instagram_template(tenant):
                     "purpose": "imagecontent",
                     "prompt": {"prompt": "brand image"},
                     "order": 0,
+                    "reference_id": 1,
                 }
             ],
         }
@@ -257,7 +262,36 @@ def test_generate_preview_bubbles_up_upstream_errors(tenant):
         )
 
 
-def test_confirm_bundle_assigns_sequential_reference_ids(tenant, db_session):
+def test_confirm_bundle_rejects_jobs_without_reference_id(tenant):
+    service = AiTaskDraftService(StubAdapter({}))
+    draft = AiTaskDraftBundleConfirmRequest.model_validate(
+        {
+            "items": [
+                {
+                    "task": {
+                        "name": "Missing refs",
+                        "template": "instagram_post",
+                        "meta": {},
+                        "post": {},
+                    },
+                    "jobs": [
+                        {
+                            "generator": "dalle",
+                            "purpose": "imagecontent",
+                            "prompt": {"prompt": "a"},
+                            "order": 0,
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(AiTaskDraftItemValidationError, match="reference_id"):
+        service.confirm_bundle(draft=draft, tenant=tenant)
+
+
+def test_confirm_bundle_persists_explicit_reference_ids(tenant, db_session):
     service = AiTaskDraftService(StubAdapter({}))
     draft = AiTaskDraftBundleConfirmRequest.model_validate(
         {
@@ -275,12 +309,14 @@ def test_confirm_bundle_assigns_sequential_reference_ids(tenant, db_session):
                             "purpose": "imagecontent",
                             "prompt": {"prompt": "a"},
                             "order": 2,
+                            "reference_id": 3,
                         },
                         {
                             "generator": "dalle",
                             "purpose": "imagecontent",
                             "prompt": {"prompt": "b"},
                             "order": 0,
+                            "reference_id": 7,
                         },
                     ],
                 }
@@ -293,7 +329,7 @@ def test_confirm_bundle_assigns_sequential_reference_ids(tenant, db_session):
     stored_jobs = db_session.exec(select(Job)).all()
     assert len(stored_jobs) == 2
     refs = sorted(j.reference_id for j in stored_jobs)
-    assert refs == [1, 2]
+    assert refs == [3, 7]
 
 
 def test_confirm_bundle_rejects_duplicate_explicit_reference_ids(tenant):
@@ -379,6 +415,128 @@ def test_confirm_bundle_rolls_back_when_writer_fails(tenant, test_engine, db_ses
     assert db_session.exec(select(Job)).all() == []
 
 
+def _runway_draft_item() -> dict:
+    return {
+        "task": {
+            "name": "Video campaign",
+            "template": "instagram_post",
+            "meta": {"theme": "motion"},
+            "post": {"caption": "Watch this"},
+        },
+        "jobs": [
+            {
+                "generator": "dalle",
+                "purpose": "imagecontent",
+                "prompt": {"prompt": "hero still"},
+                "order": 0,
+                "reference_id": 1,
+            },
+            {
+                "generator": "runway-video",
+                "purpose": "videocontent",
+                "prompt": {
+                    "prompt": "slow zoom",
+                    "model": "gen4_turbo",
+                    "reference_id": 1,
+                },
+                "order": 1,
+                "reference_id": 2,
+            },
+        ],
+    }
+
+
+def test_generate_preview_normalizes_runway_bundle(tenant):
+    adapter = StubAdapter({"items": [_runway_draft_item()]})
+    preview = AiTaskDraftService(adapter).generate_preview(
+        master_prompt_text="Master",
+        creation_prompt_text="Create mixed media",
+        tenant=tenant,
+    )
+    runway = preview.items[0].jobs[1]
+    assert runway.generator == "runway-video"
+    assert runway.prompt["model"] == "gen4_turbo"
+    assert runway.prompt["reference_id"] == 1
+
+
+def test_generate_preview_rejects_runway_without_matching_image_slot(tenant):
+    payload = _runway_draft_item()
+    payload["jobs"][1]["prompt"]["reference_id"] = 2
+    adapter = StubAdapter({"items": [payload]})
+
+    with pytest.raises(AiTaskDraftItemValidationError, match="imagecontent"):
+        AiTaskDraftService(adapter).generate_preview(
+            master_prompt_text="Master",
+            creation_prompt_text="Create mixed media",
+            tenant=tenant,
+        )
+
+
+def test_confirm_bundle_persists_runway_prompt(tenant, db_session):
+    service = AiTaskDraftService(StubAdapter({}))
+    draft = AiTaskDraftBundleConfirmRequest.model_validate(
+        {"items": [_runway_draft_item()]}
+    )
+
+    service.confirm_bundle(draft=draft, tenant=tenant)
+
+    stored_jobs = db_session.exec(select(Job)).all()
+    runway = next(j for j in stored_jobs if j.generator == "runway-video")
+    image = next(j for j in stored_jobs if j.purpose == "imagecontent")
+    assert runway.purpose == "videocontent"
+    assert runway.prompt == {
+        "prompt": "slow zoom",
+        "model": "gen4_turbo",
+        "reference_id": 1,
+    }
+    assert image.reference_id == runway.prompt["reference_id"]
+
+
+def test_confirm_bundle_runway_slot_uses_explicit_reference_ids_not_array_order(
+    tenant, db_session
+):
+    """Array order may differ from order field; explicit job.reference_id is authoritative."""
+    payload = {
+        "task": {
+            "name": "Video campaign",
+            "template": "instagram_post",
+            "meta": {},
+            "post": {"caption": "Watch this"},
+        },
+        "jobs": [
+            {
+                "generator": "dalle",
+                "purpose": "imagecontent",
+                "prompt": {"prompt": "hero still"},
+                "order": 2,
+                "reference_id": 1,
+            },
+            {
+                "generator": "runway-video",
+                "purpose": "videocontent",
+                "prompt": {
+                    "prompt": "slow zoom",
+                    "model": "gen4_turbo",
+                    "reference_id": 1,
+                },
+                "order": 1,
+                "reference_id": 2,
+            },
+        ],
+    }
+    service = AiTaskDraftService(StubAdapter({}))
+    draft = AiTaskDraftBundleConfirmRequest.model_validate({"items": [payload]})
+
+    service.confirm_bundle(draft=draft, tenant=tenant)
+
+    stored_jobs = db_session.exec(select(Job)).all()
+    image = next(j for j in stored_jobs if j.purpose == "imagecontent")
+    runway = next(j for j in stored_jobs if j.generator == "runway-video")
+    assert image.reference_id == 1
+    assert runway.reference_id == 2
+    assert runway.prompt["reference_id"] == image.reference_id
+
+
 def test_confirm_bundle_rejects_invalid_template(tenant):
     service = AiTaskDraftService(StubAdapter({}))
     draft = AiTaskDraftBundleConfirmRequest.model_validate(
@@ -397,6 +555,7 @@ def test_confirm_bundle_rejects_invalid_template(tenant):
                             "purpose": "imagecontent",
                             "prompt": {"prompt": "brand image"},
                             "order": 0,
+                            "reference_id": 1,
                         }
                     ],
                 }

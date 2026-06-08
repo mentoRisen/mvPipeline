@@ -92,8 +92,14 @@ class JobResponse(BaseModel):
 
 class JobCreate(BaseModel):
     """Schema for creating a new job."""
-    generator: str = Field(..., description="Generator to use (e.g., 'dalle', 'gptimage15', 'gptimage2')")
-    purpose: Optional[str] = Field(None, description="Purpose/reason for how the job result should be used")
+    generator: str = Field(
+        ...,
+        description="Generator to use (e.g., 'dalle', 'gptimage15', 'gptimage2', 'runway-video')",
+    )
+    purpose: Optional[str] = Field(
+        None,
+        description="Purpose/reason for how the job result should be used (e.g., 'imagecontent', 'videocontent')",
+    )
     prompt: Optional[dict] = Field(None, description="JSON with all data needed to run the prompt")
     order: Optional[int] = Field(0, description="Rendering order for this job (ascending)")
     reference_id: Optional[int] = Field(
@@ -105,8 +111,14 @@ class JobCreate(BaseModel):
 
 class JobUpdate(BaseModel):
     """Schema for updating a job."""
-    generator: Optional[str] = Field(None, description="Generator to use (e.g., 'dalle', 'gptimage15', 'gptimage2')")
-    purpose: Optional[str] = Field(None, description="Purpose/reason for how the job result should be used")
+    generator: Optional[str] = Field(
+        None,
+        description="Generator to use (e.g., 'dalle', 'gptimage15', 'gptimage2', 'runway-video')",
+    )
+    purpose: Optional[str] = Field(
+        None,
+        description="Purpose/reason for how the job result should be used (e.g., 'imagecontent', 'videocontent')",
+    )
     prompt: Optional[dict] = Field(None, description="JSON with all data needed to run the prompt")
     status: Optional[JobStatus] = Field(None, description="Job status")
     result: Optional[dict] = Field(None, description="JSON with the job result (e.g., image paths, errors)")
@@ -257,7 +269,7 @@ class AiDraftJob(BaseModel):
     reference_id: Optional[int] = Field(
         default=None,
         ge=1,
-        description="Optional per-task slot id (create-only); auto-assigned when omitted",
+        description="Per-task slot id (required on AI draft confirm); assigned explicitly by the model or UI",
     )
 
 

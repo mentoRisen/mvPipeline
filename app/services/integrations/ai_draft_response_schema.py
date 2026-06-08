@@ -33,7 +33,7 @@ def _instagram_post_schema() -> dict[str, Any]:
     }
 
 
-def _job_prompt_schema() -> dict[str, Any]:
+def _image_job_prompt_schema() -> dict[str, Any]:
     """Image/text generators read ``prompt.prompt`` at job processing time."""
     return {
         "type": "object",
@@ -45,31 +45,73 @@ def _job_prompt_schema() -> dict[str, Any]:
     }
 
 
-# Matches ``app/services/jobs/processor.py`` routing (case-insensitive at runtime).
-_AI_DRAFT_JOB_GENERATORS = ("dalle", "gptimage15", "gptimage2")
+def _runway_video_prompt_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string"},
+            "model": {
+                "type": "string",
+                "enum": ["gen4_turbo", "veo3.1_fast"],
+            },
+            "reference_id": {"type": "integer", "minimum": 1},
+        },
+        "required": ["prompt", "model", "reference_id"],
+        "additionalProperties": False,
+    }
 
-# Instagram publish path only uses jobs with this purpose (``publisher_instagram``).
-_AI_DRAFT_JOB_PURPOSE = ("imagecontent",)
+
+_AI_DRAFT_IMAGE_GENERATORS = ("dalle", "gptimage15", "gptimage2")
+_AI_DRAFT_JOB_GENERATORS = _AI_DRAFT_IMAGE_GENERATORS + ("runway-video",)
+
+_AI_DRAFT_JOB_PURPOSE = ("imagecontent", "videocontent")
 
 
-def _draft_job_schema() -> dict[str, Any]:
+def _image_draft_job_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
             "generator": {
                 "type": "string",
-                "enum": list(_AI_DRAFT_JOB_GENERATORS),
+                "enum": list(_AI_DRAFT_IMAGE_GENERATORS),
             },
             "purpose": {
                 "type": "string",
-                "enum": list(_AI_DRAFT_JOB_PURPOSE),
+                "enum": ["imagecontent"],
             },
-            "prompt": _job_prompt_schema(),
+            "prompt": _image_job_prompt_schema(),
             "order": {"type": "integer"},
+            "reference_id": {"type": "integer", "minimum": 1},
         },
-        # Strict mode: every key in ``properties`` must appear in ``required``.
-        "required": ["generator", "purpose", "prompt", "order"],
+        "required": ["generator", "purpose", "prompt", "order", "reference_id"],
         "additionalProperties": False,
+    }
+
+
+def _runway_draft_job_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "generator": {
+                "type": "string",
+                "enum": ["runway-video"],
+            },
+            "purpose": {
+                "type": "string",
+                "enum": ["videocontent"],
+            },
+            "prompt": _runway_video_prompt_schema(),
+            "order": {"type": "integer"},
+            "reference_id": {"type": "integer", "minimum": 1},
+        },
+        "required": ["generator", "purpose", "prompt", "order", "reference_id"],
+        "additionalProperties": False,
+    }
+
+
+def _draft_job_schema() -> dict[str, Any]:
+    return {
+        "oneOf": [_image_draft_job_schema(), _runway_draft_job_schema()],
     }
 
 
@@ -136,3 +178,10 @@ def draft_bundle_json_schema(*, max_items: int, max_jobs: int) -> dict[str, Any]
             },
         },
     }
+
+
+__all__ = [
+    "_AI_DRAFT_JOB_GENERATORS",
+    "_AI_DRAFT_JOB_PURPOSE",
+    "draft_bundle_json_schema",
+]

@@ -47,6 +47,7 @@ def _sample_bundle() -> AiTaskDraftBundleResponse:
                             "purpose": "imagecontent",
                             "prompt": {"prompt": "launch visual"},
                             "order": 0,
+                            "reference_id": 1,
                         }
                     ],
                 }
@@ -120,6 +121,7 @@ def test_ai_draft_preview_route_passes_limits_to_adapter(client, tenant, monkeyp
                                 "purpose": "imagecontent",
                                 "prompt": {"prompt": "draw"},
                                 "order": 0,
+                                "reference_id": 1,
                             }
                         ],
                         "warnings": [],
@@ -206,6 +208,7 @@ def test_ai_draft_preview_route_validation_error_includes_field_path(client, ten
                         "purpose": "imagecontent",
                         "prompt": {"prompt": "x"},
                         "order": 0,
+                        "reference_id": 1,
                     }
                 ],
             },
@@ -222,6 +225,7 @@ def test_ai_draft_preview_route_validation_error_includes_field_path(client, ten
                         "purpose": "imagecontent",
                         "prompt": "not-an-object",
                         "order": 0,
+                        "reference_id": 1,
                     }
                 ],
             },
@@ -313,6 +317,7 @@ def test_ai_draft_confirm_route_creates_tasks(client, tenant, monkeypatch):
                                 "purpose": "imagecontent",
                                 "prompt": {"prompt": "launch visual"},
                                 "order": 0,
+                                "reference_id": 1,
                             }
                         ],
                     },
@@ -329,6 +334,7 @@ def test_ai_draft_confirm_route_creates_tasks(client, tenant, monkeypatch):
                                 "purpose": "imagecontent",
                                 "prompt": {"prompt": "x"},
                                 "order": 0,
+                                "reference_id": 1,
                             }
                         ],
                     },
@@ -373,6 +379,7 @@ def test_ai_draft_confirm_route_rejects_tenant_fields_in_body(client, tenant, mo
                             "purpose": "imagecontent",
                             "prompt": {"prompt": "launch visual"},
                             "order": 0,
+                            "reference_id": 1,
                         }
                     ],
                 }
@@ -409,6 +416,7 @@ def test_ai_draft_confirm_route_maps_validation_errors(client, tenant, monkeypat
                                 "purpose": "imagecontent",
                                 "prompt": {"prompt": "launch visual"},
                                 "order": 0,
+                                "reference_id": 1,
                             }
                         ],
                     }
@@ -446,6 +454,7 @@ def test_ai_draft_confirm_route_maps_database_failures(client, tenant, monkeypat
                                 "purpose": "imagecontent",
                                 "prompt": {"prompt": "launch visual"},
                                 "order": 0,
+                                "reference_id": 1,
                             }
                         ],
                     }
@@ -646,6 +655,7 @@ def test_ai_draft_confirm_second_submit_with_session_returns_404(
                             "purpose": "imagecontent",
                             "prompt": {"prompt": "launch visual"},
                             "order": 0,
+                            "reference_id": 1,
                         }
                     ],
                 }
@@ -717,6 +727,7 @@ def test_ai_draft_confirm_allows_failed_session_with_existing_bundle(
                             "purpose": "imagecontent",
                             "prompt": {"prompt": "launch visual"},
                             "order": 0,
+                            "reference_id": 1,
                         }
                     ],
                 }
@@ -774,6 +785,7 @@ def test_ai_draft_confirm_validation_persists_last_error(
                             "purpose": "imagecontent",
                             "prompt": {"prompt": "launch visual"},
                             "order": 0,
+                            "reference_id": 1,
                         }
                     ],
                 }

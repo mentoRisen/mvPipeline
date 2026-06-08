@@ -163,6 +163,12 @@
                     <td class="jobs-prompt">
                       <span v-if="!job.prompt?.prompt">—</span>
                       <span v-else>
+                        <span
+                          v-if="isRunwayGenerator(job.generator)"
+                          class="runway-prompt-meta"
+                        >
+                          {{ job.prompt.model }} → image ref {{ job.prompt.reference_id }}
+                        </span>
                         <span v-if="expandedPrompts[job.id]">
                           {{ job.prompt.prompt }}
                         </span>
@@ -283,25 +289,63 @@
             />
           </div>
           <div class="form-group">
-            <label>Generator</label>
-            <select v-model="newJob.generator">
-              <option value="dalle">dalle</option>
-              <option value="gptimage15">gptimage15</option>
-              <option value="gptimage2">gptimage2</option>
+            <label>Purpose</label>
+            <select v-model="newJob.purpose" @change="onJobPurposeChange">
+              <option
+                v-for="purpose in jobPurposes"
+                :key="purpose"
+                :value="purpose"
+              >
+                {{ purpose }}
+              </option>
             </select>
           </div>
           <div class="form-group">
-            <label>Purpose</label>
-            <select v-model="newJob.purpose">
-              <option value="imagecontent">imagecontent</option>
+            <label>Generator</label>
+            <select v-model="newJob.generator">
+              <option
+                v-for="gen in availableJobGenerators"
+                :key="gen"
+                :value="gen"
+              >
+                {{ gen }}
+              </option>
             </select>
+          </div>
+          <div v-if="isRunwayJobModal" class="form-group">
+            <label>Model</label>
+            <select v-model="newJob.model">
+              <option
+                v-for="model in runwayVideoModels"
+                :key="model"
+                :value="model"
+              >
+                {{ model }}
+              </option>
+            </select>
+          </div>
+          <div v-if="isRunwayJobModal" class="form-group">
+            <label>Image slot</label>
+            <select v-model.number="newJob.imageSlot">
+              <option :value="null" disabled>Select image job ref</option>
+              <option
+                v-for="slot in imageSlotOptionsForModal"
+                :key="slot.value"
+                :value="slot.value"
+              >
+                {{ slot.label }}
+              </option>
+            </select>
+            <p v-if="!imageSlotOptionsForModal.length" class="form-hint">
+              Add an imagecontent job on this task first.
+            </p>
           </div>
           <div class="form-group">
             <label>Prompt</label>
             <textarea
               v-model="newJob.promptText"
               rows="3"
-              placeholder="Enter prompt"
+              :placeholder="isRunwayJobModal ? 'Motion prompt for Runway' : 'Enter prompt'"
             ></textarea>
           </div>
           <div class="form-group" v-if="editingJobId">
@@ -545,6 +589,14 @@
 
 <script>
 import { taskService } from '../services/api'
+import {
+  JOB_PURPOSES,
+  RUNWAY_VIDEO_MODELS,
+  defaultNewJob,
+  generatorsForPurpose,
+  imageSlotOptions,
+  isRunwayGenerator,
+} from './jobGeneratorConfig.js'
 
 export default {
   name: 'TaskDetail',
@@ -574,12 +626,7 @@ export default {
       currentJobResult: null,
       currentJobStatus: null,
       currentJobResultText: '',
-      newJob: {
-        order: 0,
-        generator: 'dalle',
-        purpose: 'imagecontent',
-        promptText: '',
-      },
+      newJob: defaultNewJob('imagecontent'),
       // Per-job processing state for showing a loading indicator on the Process button
       processingJobs: {},
       // JSON modal state
@@ -624,6 +671,21 @@ export default {
         return this.task.post.caption
       }
       return ''
+    },
+    jobPurposes() {
+      return JOB_PURPOSES
+    },
+    availableJobGenerators() {
+      return generatorsForPurpose(this.newJob.purpose)
+    },
+    runwayVideoModels() {
+      return RUNWAY_VIDEO_MODELS
+    },
+    isRunwayJobModal() {
+      return isRunwayGenerator(this.newJob.generator)
+    },
+    imageSlotOptionsForModal() {
+      return imageSlotOptions(this.task?.jobs || [])
     },
   },
   watch: {
@@ -1016,16 +1078,18 @@ export default {
         )
       }
     },
+    isRunwayGenerator,
+    onJobPurposeChange() {
+      const defaults = defaultNewJob(this.newJob.purpose)
+      this.newJob.generator = defaults.generator
+      this.newJob.model = defaults.model
+      this.newJob.imageSlot = defaults.imageSlot
+    },
     createJob() {
       // Open job creation modal
       this.editingJobId = null
       this.showJobModal = true
-      this.newJob = {
-        order: 0,
-        generator: 'dalle',
-        purpose: 'imagecontent',
-        promptText: '',
-      }
+      this.newJob = defaultNewJob('imagecontent')
     },
     editJob(job) {
       // Open job edit modal with job data
@@ -1036,11 +1100,15 @@ export default {
         ? this.formatJson(this.currentJobResult)
         : ''
       this.showJobModal = true
+      const purpose = job.purpose || 'imagecontent'
       this.newJob = {
+        ...defaultNewJob(purpose),
         order: job.order ?? 0,
-        generator: job.generator || 'dalle',
-        purpose: job.purpose || 'imagecontent',
+        generator: job.generator || defaultNewJob(purpose).generator,
+        purpose,
         promptText: job.prompt?.prompt || '',
+        model: job.prompt?.model || defaultNewJob(purpose).model,
+        imageSlot: job.prompt?.reference_id ?? null,
       }
     },
     cancelJob() {
@@ -1049,20 +1117,42 @@ export default {
       this.currentJobResult = null
       this.currentJobStatus = null
       this.currentJobResultText = ''
-      this.newJob = {
-        order: 0,
-        generator: 'dalle',
-        purpose: 'imagecontent',
-        promptText: '',
-      }
+      this.newJob = defaultNewJob('imagecontent')
     },
     async submitJob() {
       if (!this.newJob.generator) {
         this.showError('Generator is required')
         return
       }
+      if (isRunwayGenerator(this.newJob.generator)) {
+        if (!this.newJob.promptText?.trim()) {
+          this.showError('Prompt is required for runway-video jobs')
+          return
+        }
+        if (!this.newJob.model) {
+          this.showError('Model is required for runway-video jobs')
+          return
+        }
+        if (!this.newJob.imageSlot) {
+          this.showError('Image slot is required for runway-video jobs')
+          return
+        }
+      }
 
       try {
+        let prompt = null
+        if (this.newJob.promptText?.trim()) {
+          if (isRunwayGenerator(this.newJob.generator)) {
+            prompt = {
+              prompt: this.newJob.promptText.trim(),
+              model: this.newJob.model,
+              reference_id: Number(this.newJob.imageSlot),
+            }
+          } else {
+            prompt = { prompt: this.newJob.promptText }
+          }
+        }
+
         // Build payload (status is set automatically on backend for new jobs)
         const payload = {
           order:
@@ -1071,9 +1161,7 @@ export default {
               : 0,
           generator: this.newJob.generator,
           purpose: this.newJob.purpose || null,
-          prompt: this.newJob.promptText
-            ? { prompt: this.newJob.promptText }
-            : null,
+          prompt,
         }
 
         // When editing an existing job, allow updating the result JSON
@@ -1097,12 +1185,7 @@ export default {
         }
 
         // Reset form
-        this.newJob = {
-          order: 0,
-          generator: 'dalle',
-          purpose: 'imagecontent',
-          promptText: '',
-        }
+        this.newJob = defaultNewJob('imagecontent')
         this.editingJobId = null
         this.showJobModal = false
 
