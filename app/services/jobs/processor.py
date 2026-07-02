@@ -10,6 +10,7 @@ import traceback
 from sqlmodel import Session, select
 from app.models.job import Job, JobStatus
 from app.models.task import Task, TaskStatus
+from app.models.tenant import Tenant
 from app.db.engine import engine
 from app.services.public_url import public_url_for_image_path
 
@@ -142,6 +143,60 @@ def process_job(job: Job) -> None:
                 session.add(db_job)
                 session.commit()
                 logger.info(f"Successfully processed job {job.id} with GPT-Image-2. Image saved to {image_path}")
+            elif generator_type == "runway-video":
+                from app.config import RUNWAY_VIDEO_TIMEOUT_SECONDS
+                from app.services.integrations.runway_config import resolve_runway_api_key
+                from app.services.job_prompt_validation import (
+                    resolve_processed_image_slot,
+                    validate_runway_video_prompt,
+                )
+                from app.services.jobs.processor_runway_video import generate_video
+
+                if not job.prompt:
+                    raise ValueError(f"Job {job.id} is missing prompt data")
+                normalized_prompt = validate_runway_video_prompt(job.prompt)
+                image_slot = normalized_prompt["reference_id"]
+                _image_job, image_path = resolve_processed_image_slot(
+                    session,
+                    job.task_id,
+                    image_slot,
+                )
+
+                task_row = session.get(Task, job.task_id)
+                tenant_env: dict = {}
+                if task_row and task_row.tenant_id:
+                    tenant_row = session.get(Tenant, task_row.tenant_id)
+                    tenant_env = (tenant_row.env or {}) if tenant_row else {}
+                api_key = resolve_runway_api_key(tenant_env=tenant_env)
+                video_result = generate_video(
+                    image_path=image_path,
+                    prompt_text=normalized_prompt["prompt"],
+                    model=normalized_prompt["model"],
+                    task_id=str(job.task_id),
+                    job_id=str(job.id),
+                    api_key=api_key,
+                    timeout_seconds=RUNWAY_VIDEO_TIMEOUT_SECONDS,
+                )
+                public_url = public_url_for_image_path(video_result["video_path"])
+
+                db_job.status = JobStatus.PROCESSED
+                db_job.result = {
+                    "video_path": video_result["video_path"],
+                    "public_url": public_url,
+                    "generator": generator_type,
+                }
+                if video_result.get("runway_task_id"):
+                    db_job.result["runway_task_id"] = video_result["runway_task_id"]
+                if video_result.get("runway_url"):
+                    db_job.result["runway_url"] = video_result["runway_url"]
+                db_job.updated_at = datetime.utcnow()
+                session.add(db_job)
+                session.commit()
+                logger.info(
+                    "Successfully processed job %s with Runway video. Video saved to %s",
+                    job.id,
+                    video_result["video_path"],
+                )
             else:
                 raise ValueError(f"Unknown generator type: {job.generator}")
             

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Sequence
 from uuid import UUID
 
 from sqlmodel import Session, select
 
-from app.models.job import Job
+import app.config as app_config
+from app.models.job import Job, JobStatus
 
 RUNWAY_VIDEO_GENERATOR = "runway-video"
 VIDEOCONTENT_PURPOSE = "videocontent"
@@ -61,6 +63,55 @@ def validate_runway_video_prompt(prompt: dict | None) -> dict:
         "model": model,
         "reference_id": reference_id,
     }
+
+
+def _local_path_from_output_relative(rel: str) -> Path:
+    """Map web-relative /output/... path to a filesystem path under OUTPUT_DIR."""
+    normalized = rel.strip().lstrip("/")
+    if normalized.startswith("output/"):
+        return app_config.OUTPUT_DIR / normalized[len("output/") :]
+    return app_config.OUTPUT_DIR / normalized
+
+
+def resolve_processed_image_slot(
+    session: Session,
+    task_id: UUID,
+    slot: int,
+) -> tuple[Job, Path]:
+    """Return a processed imagecontent job and local image path for Runway input."""
+    row = session.exec(
+        select(Job)
+        .where(
+            Job.task_id == task_id,
+            Job.reference_id == slot,
+            Job.purpose == IMAGECONTENT_PURPOSE,
+        )
+        .limit(1)
+    ).first()
+    if row is None:
+        raise ValueError(
+            f"Image slot {slot} has no imagecontent job on this task",
+        )
+
+    current_status = (
+        row.status.value if isinstance(row.status, JobStatus) else str(row.status)
+    )
+    if current_status != JobStatus.PROCESSED.value:
+        raise ValueError(
+            f"Image slot {slot} is not processed (status: {current_status})",
+        )
+
+    result = row.result if isinstance(row.result, dict) else {}
+    image_path = result.get("image_path") or result.get("image_path_relative")
+    if not isinstance(image_path, str) or not image_path.strip():
+        raise ValueError(f"Image slot {slot} has no image path in result")
+
+    local_path = _local_path_from_output_relative(image_path)
+    if not local_path.is_file():
+        raise ValueError(
+            f"Image slot {slot} image file not found at {local_path}",
+        )
+    return row, local_path
 
 
 def validate_image_slot_reference(
@@ -210,6 +261,7 @@ __all__ = [
     "VIDEOCONTENT_PURPOSE",
     "normalize_non_runway_prompt",
     "planned_reference_ids",
+    "resolve_processed_image_slot",
     "validate_draft_job_reference_ids",
     "validate_image_slot_reference",
     "validate_job_prompt_for_write",

@@ -198,6 +198,12 @@
                           class="jobs-image-thumb"
                         />
                       </button>
+                      <video
+                        v-else-if="job.result && getJobVideoUrl(job.result)"
+                        class="jobs-video-thumb"
+                        controls
+                        :src="getJobVideoUrl(job.result)"
+                      ></video>
                       <span v-else class="muted">—</span>
                     </td>
                     <td>{{ formatDate(job.created_at) }}</td>
@@ -214,11 +220,17 @@
                         v-if="job.status === 'ready'"
                         type="button"
                         class="btn-small btn-primary"
-                        :disabled="processingJobs[job.id]"
+                        :disabled="processingJobs[job.id] || isRunwayProcessBlocked(job)"
                         @click="processJob(job)"
                       >
                         {{ processingJobs[job.id] ? 'Processing…' : 'Process' }}
                       </button>
+                      <p
+                        v-if="job.status === 'ready' && runwayProcessBlockedReasonFor(job)"
+                        class="form-hint runway-process-hint"
+                      >
+                        {{ runwayProcessBlockedReasonFor(job) }}
+                      </p>
                       <button
                         v-if="job.status === 'processing' || job.status === 'error' || job.status === 'processed'"
                         type="button"
@@ -385,6 +397,17 @@
                     class="image-preview-img"
                   />
                 </a>
+              </div>
+              <div
+                v-else-if="currentJobResult && getJobVideoUrl(currentJobResult)"
+                class="image-preview"
+              >
+                <label>Generated Video</label>
+                <video
+                  class="video-preview-player"
+                  controls
+                  :src="getJobVideoUrl(currentJobResult)"
+                ></video>
               </div>
             </div>
           </div>
@@ -596,6 +619,8 @@ import {
   generatorsForPurpose,
   imageSlotOptions,
   isRunwayGenerator,
+  runwayImageSlotProcessed,
+  runwayProcessBlockedReason,
 } from './jobGeneratorConfig.js'
 
 export default {
@@ -962,6 +987,21 @@ export default {
       const root = apiBase.replace(/\/api\/v1\/?$/, '')
       return root + rel
     },
+    getJobVideoUrl(result) {
+      const rel = result?.video_path
+      if (!rel) return null
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+      const root = apiBase.replace(/\/api\/v1\/?$/, '')
+      return root + rel
+    },
+    isRunwayProcessBlocked(job) {
+      if (!this.task?.jobs) return false
+      return isRunwayGenerator(job?.generator) && !runwayImageSlotProcessed(job, this.task.jobs)
+    },
+    runwayProcessBlockedReasonFor(job) {
+      if (!this.task?.jobs) return null
+      return runwayProcessBlockedReason(job, this.task.jobs)
+    },
     getJobPublicImageUrl(result) {
       const rel = result?.image_path || result?.image_path_relative
       if (!rel) return null
@@ -1324,6 +1364,26 @@ export default {
   border-radius: 4px;
   border: 1px solid #ddd;
   display: block;
+}
+
+.jobs-video-thumb {
+  width: 120px;
+  max-height: 72px;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  display: block;
+}
+
+.video-preview-player {
+  width: 100%;
+  max-width: 480px;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+}
+
+.runway-process-hint {
+  margin-top: 0.25rem;
+  max-width: 12rem;
 }
 
 .image-thumb-button {

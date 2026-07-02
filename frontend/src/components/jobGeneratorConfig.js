@@ -98,6 +98,52 @@ export function runwayImageSlotValid(job, siblingJobs) {
   )
 }
 
+function imageResultPath(result) {
+  if (!result || typeof result !== 'object') return null
+  const path = result.image_path || result.image_path_relative
+  return typeof path === 'string' && path.trim() ? path.trim() : null
+}
+
+export function runwayImageSlotProcessed(job, siblingJobs) {
+  if (!isRunwayGenerator(job?.generator)) return true
+  if (!runwayImageSlotValid(job, siblingJobs)) return false
+
+  const referenceId = job.prompt.reference_id
+  const imageJob = siblingJobs.find(
+    (siblingJob) =>
+      siblingJob?.purpose === 'imagecontent' && siblingJob?.reference_id === referenceId
+  )
+  if (!imageJob) return false
+  if ((imageJob.status || '').toLowerCase() !== 'processed') return false
+  return Boolean(imageResultPath(imageJob.result))
+}
+
+export function runwayProcessBlockedReason(job, siblingJobs) {
+  if (!isRunwayGenerator(job?.generator)) return null
+  if (!runwayImageSlotValid(job, siblingJobs)) {
+    const slot = job?.prompt?.reference_id
+    return typeof slot === 'number'
+      ? `Image slot ${slot} is not available on this task`
+      : 'Image slot is required for runway-video jobs'
+  }
+
+  const referenceId = job.prompt.reference_id
+  const imageJob = siblingJobs.find(
+    (siblingJob) =>
+      siblingJob?.purpose === 'imagecontent' && siblingJob?.reference_id === referenceId
+  )
+  if (!imageJob) {
+    return `Image slot ${referenceId} is not available on this task`
+  }
+  if ((imageJob.status || '').toLowerCase() !== 'processed') {
+    return `Process image slot ${referenceId} first`
+  }
+  if (!imageResultPath(imageJob.result)) {
+    return `Image slot ${referenceId} has no generated image yet`
+  }
+  return null
+}
+
 export function draftJobPromptValid(job, siblingJobs = []) {
   if (!job?.generator) return false
   if (typeof job?.reference_id !== 'number' || job.reference_id < 1) return false

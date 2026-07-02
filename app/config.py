@@ -169,6 +169,17 @@ AI_TASK_DRAFT_TIMEOUT_SECONDS = int(os.getenv("AI_TASK_DRAFT_TIMEOUT_SECONDS", "
 GPT_IMAGE_TIMEOUT_SECONDS = int(os.getenv("GPT_IMAGE_TIMEOUT_SECONDS", "240"))
 """Timeout in seconds for OpenAI Images API generation requests (high quality often exceeds 60s)."""
 
+# Runway API configuration
+RUNWAY_API_KEY = os.getenv("RUNWAY_API_KEY")
+"""Runway API key for image-to-video generation.
+
+Set via RUNWAY_API_KEY environment variable or .env file.
+Tenant env may override at call time via resolve_runway_api_key().
+"""
+
+RUNWAY_VIDEO_TIMEOUT_SECONDS = int(os.getenv("RUNWAY_VIDEO_TIMEOUT_SECONDS", "600"))
+"""Timeout in seconds for Runway image-to-video submit + poll loop."""
+
 AI_TASK_DRAFT_MAX_BUNDLE_ITEMS = int(os.getenv("AI_TASK_DRAFT_MAX_BUNDLE_ITEMS", "12"))
 """Maximum number of draft tasks allowed in one AI preview/confirm bundle."""
 

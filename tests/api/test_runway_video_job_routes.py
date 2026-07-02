@@ -219,3 +219,74 @@ def test_dalle_job_still_accepts_prompt_only(client, tenant):
     )
     assert response.status_code == 201
     assert response.json()["prompt"] == {"prompt": "still life"}
+
+
+def test_process_runway_video_job_returns_processed_result(
+    client,
+    tenant,
+    test_engine,
+    tmp_path,
+    monkeypatch,
+):
+    import app.config as app_config
+    import app.services.jobs.processor as job_processor_module
+
+    monkeypatch.setattr(job_processor_module, "engine", test_engine)
+    monkeypatch.setattr(app_config, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setenv("RUNWAY_API_KEY", "global-runway-key")
+
+    task_id = _create_task(client, tenant)
+    image = client.post(
+        f"/api/v1/tasks/{task_id}/jobs",
+        headers=_headers(tenant),
+        json={"generator": "dalle", "purpose": "imagecontent"},
+    )
+    assert image.status_code == 201
+    image_job_id = image.json()["id"]
+
+    video = client.post(
+        f"/api/v1/tasks/{task_id}/jobs",
+        headers=_headers(tenant),
+        json={
+            "generator": "runway-video",
+            "purpose": "videocontent",
+            "prompt": _runway_prompt(reference_id=1),
+        },
+    )
+    assert video.status_code == 201
+    video_job_id = video.json()["id"]
+
+    image_file = tmp_path / str(task_id) / "source.jpeg"
+    image_file.parent.mkdir(parents=True, exist_ok=True)
+    image_file.write_bytes(b"fake-jpeg")
+    client.put(
+        f"/api/v1/tasks/{task_id}/jobs/{image_job_id}",
+        headers=_headers(tenant),
+        json={
+            "status": "processed",
+            "result": {"image_path": f"/output/{task_id}/source.jpeg"},
+        },
+    )
+    client.put(
+        f"/api/v1/tasks/{task_id}/jobs/{video_job_id}",
+        headers=_headers(tenant),
+        json={"status": "ready"},
+    )
+
+    monkeypatch.setattr(
+        "app.services.jobs.processor_runway_video.generate_video",
+        lambda **kwargs: {
+            "video_path": f"/output/{task_id}/{video_job_id}.mp4",
+            "runway_task_id": "rw-1",
+        },
+    )
+
+    response = client.post(
+        f"/api/v1/tasks/{task_id}/jobs/{video_job_id}/process",
+        headers=_headers(tenant),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "processed"
+    assert body["result"]["video_path"] == f"/output/{task_id}/{video_job_id}.mp4"
+    assert body["result"]["generator"] == "runway-video"

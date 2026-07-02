@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
-from uuid import uuid4
 
 import pytest
 from sqlmodel import Session
 
 from app.models.job import Job, JobStatus
 from app.models.task import Task
+import app.config as app_config
 from app.services.job_prompt_validation import (
     JobPromptValidationError,
     planned_reference_ids,
+    resolve_processed_image_slot,
     validate_draft_job_reference_ids,
     validate_image_slot_reference,
     validate_job_prompt_for_write,
@@ -269,3 +271,80 @@ def test_validate_job_prompt_for_write_runway_requires_videocontent_purpose():
             ],
         )
     assert excinfo.value.field == "purpose"
+
+
+def _create_task_with_image_job(
+    db_session: Session,
+    *,
+    status: JobStatus = JobStatus.PROCESSED,
+    result: dict | None = None,
+    slot: int = 1,
+) -> tuple[Task, Job]:
+    task = Task(name="slot resolve task", template="instagram_post")
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    image_job = Job(
+        task_id=task.id,
+        reference_id=slot,
+        generator="dalle",
+        purpose="imagecontent",
+        status=status,
+        result=result,
+    )
+    db_session.add(image_job)
+    db_session.commit()
+    db_session.refresh(image_job)
+    return task, image_job
+
+
+def test_resolve_processed_image_slot_happy_path(
+    db_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(app_config, "OUTPUT_DIR", tmp_path)
+    image_file = tmp_path / "task-1" / "job-1.jpeg"
+    image_file.parent.mkdir(parents=True)
+    image_file.write_bytes(b"fake-jpeg")
+
+    task, _image_job = _create_task_with_image_job(
+        db_session,
+        result={"image_path": "/output/task-1/job-1.jpeg"},
+    )
+
+    matched_job, local_path = resolve_processed_image_slot(db_session, task.id, 1)
+    assert matched_job.reference_id == 1
+    assert local_path == image_file
+
+
+def test_resolve_processed_image_slot_not_processed(db_session: Session):
+    task, _image_job = _create_task_with_image_job(
+        db_session,
+        status=JobStatus.READY,
+        result={"image_path": "/output/task-1/job-1.jpeg"},
+    )
+
+    with pytest.raises(ValueError, match="not processed"):
+        resolve_processed_image_slot(db_session, task.id, 1)
+
+
+def test_resolve_processed_image_slot_no_image_path(db_session: Session):
+    task, _image_job = _create_task_with_image_job(
+        db_session,
+        result={},
+    )
+
+    with pytest.raises(ValueError, match="no image path"):
+        resolve_processed_image_slot(db_session, task.id, 1)
+
+
+def test_resolve_processed_image_slot_missing_slot(db_session: Session):
+    task = Task(name="empty task", template="instagram_post")
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    with pytest.raises(ValueError, match="no imagecontent job"):
+        resolve_processed_image_slot(db_session, task.id, 1)
